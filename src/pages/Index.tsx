@@ -1,16 +1,41 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useWorkbenchStore } from '@/store/workbenchStore';
+import TopBar from '@/components/workbench/TopBar';
+import FileTree from '@/components/workbench/FileTree';
+import EditorPanel from '@/components/workbench/EditorPanel';
+import AIPanel from '@/components/workbench/AIPanel';
+import TerminalPanel from '@/components/workbench/TerminalPanel';
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
+const Index = () => {
+  const { terminalVisible } = useWorkbenchStore();
+
   return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
+    <div className="h-screen flex flex-col overflow-hidden">
+      <TopBar />
+      <div className="flex-1 flex overflow-hidden">
+        {/* File tree */}
+        <div className="w-56 shrink-0 border-r border-border">
+          <FileTree />
+        </div>
+
+        {/* Editor + Terminal */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-hidden">
+            <EditorPanel />
+          </div>
+          {terminalVisible && (
+            <div className="h-40 shrink-0">
+              <TerminalPanel />
+            </div>
+          )}
+        </div>
+
+        {/* AI Panel */}
+        <div className="w-80 shrink-0">
+          <AIPanel />
+        </div>
+      </div>
     </div>
   );
 };
-
-const Index = PlaceholderIndex;
 
 export default Index;

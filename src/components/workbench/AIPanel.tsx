@@ -95,9 +95,9 @@ const AIPanel = () => {
                       ? 'bg-primary/15 text-foreground'
                       : 'bg-card text-card-foreground'
                   }`}>
-                    <ReactMarkdown className="prose prose-sm prose-invert max-w-none [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&>blockquote]:border-primary/50 [&>blockquote]:text-muted-foreground">
-                      {msg.content}
-                    </ReactMarkdown>
+                    <div className="prose prose-sm prose-invert max-w-none [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&>blockquote]:border-primary/50 [&>blockquote]:text-muted-foreground">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
                   </div>
                   {msg.role === 'user' && (
                     <div className="w-6 h-6 rounded bg-accent/20 flex items-center justify-center shrink-0 mt-0.5">

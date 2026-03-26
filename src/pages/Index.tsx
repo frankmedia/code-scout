@@ -4,6 +4,7 @@ import FileTree from '@/components/workbench/FileTree';
 import EditorPanel from '@/components/workbench/EditorPanel';
 import AIPanel from '@/components/workbench/AIPanel';
 import TerminalPanel from '@/components/workbench/TerminalPanel';
+import ModelSettings from '@/components/workbench/ModelSettings';
 
 const Index = () => {
   const { terminalVisible } = useWorkbenchStore();

@@ -1,11 +1,6 @@
-import { Cpu, ChevronDown, Terminal, Settings, Zap } from 'lucide-react';
+import { Cpu, ChevronDown, Terminal, Settings, Zap, Brain, Code, TestTube } from 'lucide-react';
 import { useWorkbenchStore, AppMode } from '@/store/workbenchStore';
-
-const models = [
-  { id: 'local-ollama', label: 'Local (Ollama)', icon: '🟢' },
-  { id: 'openai-gpt4', label: 'GPT-4o', icon: '🔵' },
-  { id: 'anthropic-claude', label: 'Claude 3.5', icon: '🟠' },
-];
+import { useModelStore } from '@/store/modelStore';
 
 const modes: { key: AppMode; label: string }[] = [
   { key: 'ask', label: 'Ask' },
@@ -14,8 +9,14 @@ const modes: { key: AppMode; label: string }[] = [
 ];
 
 const TopBar = () => {
-  const { selectedModel, setSelectedModel, mode, setMode, toggleTerminal, terminalVisible } = useWorkbenchStore();
-  const currentModel = models.find(m => m.id === selectedModel) || models[0];
+  const { mode, setMode, toggleTerminal, terminalVisible } = useWorkbenchStore();
+  const { models, setSettingsOpen } = useModelStore();
+  const getModelForRole = useModelStore(s => s.getModelForRole);
+
+  const orchestrator = getModelForRole('orchestrator');
+  const coder = getModelForRole('coder');
+  const tester = getModelForRole('tester');
+  const activeCount = models.filter(m => m.enabled).length;
 
   return (
     <div className="h-11 bg-surface-panel border-b border-border flex items-center justify-between px-4">
@@ -47,27 +48,36 @@ const TopBar = () => {
 
       {/* Right */}
       <div className="flex items-center gap-2">
-        {/* Model selector */}
-        <div className="relative group">
-          <button className="flex items-center gap-1.5 bg-secondary px-3 py-1.5 rounded-lg text-xs text-secondary-foreground hover:bg-surface-hover transition-colors">
-            <Cpu className="h-3.5 w-3.5" />
-            <span>{currentModel.icon} {currentModel.label}</span>
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-xl py-1 w-48 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-            {models.map(m => (
-              <button
-                key={m.id}
-                onClick={() => setSelectedModel(m.id)}
-                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-surface-hover transition-colors ${
-                  m.id === selectedModel ? 'text-primary' : 'text-card-foreground'
-                }`}
-              >
-                {m.icon} {m.label}
-              </button>
-            ))}
-          </div>
+        {/* Active agents indicator */}
+        <div className="hidden md:flex items-center gap-1.5 bg-secondary px-2.5 py-1 rounded-lg">
+          {orchestrator && (
+            <div className="flex items-center gap-1" title={`Orchestrator: ${orchestrator.name}`}>
+              <Brain className="h-3 w-3 text-accent" />
+              <span className="text-[10px] text-accent-foreground/70 max-w-16 truncate">{orchestrator.modelId}</span>
+            </div>
+          )}
+          {coder && (
+            <div className="flex items-center gap-1" title={`Coder: ${coder.name}`}>
+              <Code className="h-3 w-3 text-primary" />
+              <span className="text-[10px] text-foreground/70 max-w-16 truncate">{coder.modelId}</span>
+            </div>
+          )}
+          {tester && (
+            <div className="flex items-center gap-1" title={`Tester: ${tester.name}`}>
+              <TestTube className="h-3 w-3 text-warning" />
+              <span className="text-[10px] text-foreground/70 max-w-16 truncate">{tester.modelId}</span>
+            </div>
+          )}
         </div>
+
+        {/* Model count badge (mobile) */}
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="md:hidden flex items-center gap-1 bg-secondary px-2.5 py-1.5 rounded-lg text-xs text-secondary-foreground"
+        >
+          <Cpu className="h-3.5 w-3.5" />
+          <span>{activeCount}</span>
+        </button>
 
         <button
           onClick={toggleTerminal}
@@ -75,7 +85,10 @@ const TopBar = () => {
         >
           <Terminal className="h-4 w-4" />
         </button>
-        <button className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors">
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+        >
           <Settings className="h-4 w-4" />
         </button>
       </div>

@@ -4,12 +4,14 @@ import FileTree from '@/components/workbench/FileTree';
 import EditorPanel from '@/components/workbench/EditorPanel';
 import AIPanel from '@/components/workbench/AIPanel';
 import TerminalPanel from '@/components/workbench/TerminalPanel';
+import ModelSettings from '@/components/workbench/ModelSettings';
 
 const Index = () => {
   const { terminalVisible } = useWorkbenchStore();
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
+      <ModelSettings />
       <TopBar />
       <div className="flex-1 flex overflow-hidden">
         {/* File tree */}

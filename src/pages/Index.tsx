@@ -11,6 +11,7 @@ const Index = () => {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
+      <ModelSettings />
       <TopBar />
       <div className="flex-1 flex overflow-hidden">
         {/* File tree */}

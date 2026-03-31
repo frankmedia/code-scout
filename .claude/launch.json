@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Vite Dev Server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 8080,
+      "autoPort": true
+    },
+    {
+      "name": "Vite Preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview"],
+      "port": 4173
+    },
+    {
+      "name": "Vitest (watch)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test:watch"],
+      "port": null
+    }
+  ]
+}

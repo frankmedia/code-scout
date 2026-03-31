@@ -1,0 +1,205 @@
+import { useState, useCallback } from 'react';
+import { Plus, MessageSquare, Trash2, Edit2, Check, X, ChevronLeft } from 'lucide-react';
+import { useChatHistoryStore, createWelcomeMessages, type SavedChat } from '@/store/chatHistoryStore';
+import { useWorkbenchStore } from '@/store/workbenchStore';
+import { useProjectStore } from '@/store/projectStore';
+
+/** Stable fallback for Zustand selectors — a fresh [] each time breaks useSyncExternalStore. */
+const EMPTY_SAVED_CHATS: SavedChat[] = [];
+
+function timeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+const SessionSidebar = () => {
+  const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const savedChats = useChatHistoryStore(
+    useCallback(
+      s =>
+        activeProjectId
+          ? (s.chatsByProject[activeProjectId] ?? EMPTY_SAVED_CHATS)
+          : EMPTY_SAVED_CHATS,
+      [activeProjectId],
+    ),
+  );
+  const activeChatId = useChatHistoryStore(
+    useCallback(
+      s =>
+        activeProjectId
+          ? (s.activeChatByProject[activeProjectId] ?? null)
+          : null,
+      [activeProjectId],
+    ),
+  );
+  const { deleteChat, renameChat, loadChat, setActiveChatId } = useChatHistoryStore();
+  const { setMessages, bumpChatSession, setCurrentPlan } = useWorkbenchStore();
+  const { closeProject, getActiveProject } = useProjectStore();
+  const activeProject = getActiveProject();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  const sorted = [...savedChats].sort((a, b) => b.updatedAt - a.updatedAt);
+
+  const handleNewChat = () => {
+    const currentMessages = useWorkbenchStore.getState().messages;
+    const userMsgs = currentMessages.filter(m => m.role === 'user');
+    if (userMsgs.length > 0) {
+      useChatHistoryStore.getState().saveCurrentChat(currentMessages);
+    }
+    setMessages(createWelcomeMessages());
+    setCurrentPlan(null);
+    setActiveChatId(null);
+    bumpChatSession();
+  };
+
+  const handleLoadChat = (id: string) => {
+    const chat = loadChat(id);
+    if (!chat) return;
+    setMessages(chat.messages);
+    setCurrentPlan(null);
+    setActiveChatId(id);
+    bumpChatSession();
+  };
+
+  const handleRenameStart = (e: React.MouseEvent, id: string, title: string) => {
+    e.stopPropagation();
+    setEditingId(id);
+    setEditTitle(title);
+  };
+
+  const handleRenameConfirm = (id: string) => {
+    if (editTitle.trim()) {
+      renameChat(id, editTitle.trim());
+    }
+    setEditingId(null);
+  };
+
+  const handleRenameCancel = () => {
+    setEditingId(null);
+  };
+
+  const handleDelete = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    deleteChat(id);
+    if (activeChatId === id) {
+      setActiveChatId(null);
+      setMessages(createWelcomeMessages());
+      setCurrentPlan(null);
+      bumpChatSession();
+    }
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-surface-panel overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2.5 border-b border-border shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider truncate max-w-[120px]" title={activeProject?.name}>
+            {activeProject?.name || 'Sessions'}
+          </p>
+          <button
+            onClick={closeProject}
+            title="Back to projects"
+            className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors shrink-0"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <button
+          onClick={handleNewChat}
+          className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Agent
+        </button>
+      </div>
+
+      {/* Sessions list */}
+      <div className="flex-1 overflow-y-auto py-1">
+        {sorted.length === 0 ? (
+          <div className="p-4 text-center">
+            <MessageSquare className="h-6 w-6 text-muted-foreground/30 mx-auto mb-2" />
+            <p className="text-xs text-muted-foreground">No sessions yet</p>
+          </div>
+        ) : (
+          sorted.map(chat => {
+            const isActive = chat.id === activeChatId;
+            return (
+              <div
+                key={chat.id}
+                onClick={() => handleLoadChat(chat.id)}
+                className={`group relative flex flex-col px-3 py-2 cursor-pointer transition-colors border-l-2 ${
+                  isActive
+                    ? 'bg-primary/10 border-l-primary'
+                    : 'border-l-transparent hover:bg-surface-hover'
+                }`}
+              >
+                {editingId === chat.id ? (
+                  <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                    <input
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRenameConfirm(chat.id);
+                        if (e.key === 'Escape') handleRenameCancel();
+                      }}
+                      onBlur={() => handleRenameConfirm(chat.id)}
+                      className="flex-1 bg-input text-xs text-foreground rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => handleRenameConfirm(chat.id)}
+                      className="p-0.5 rounded text-success hover:bg-success/10"
+                    >
+                      <Check className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={handleRenameCancel}
+                      className="p-0.5 rounded text-muted-foreground hover:bg-surface-hover"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-xs text-foreground truncate pr-10 leading-tight">
+                      {chat.title}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5">
+                      {timeAgo(chat.updatedAt)}
+                    </span>
+
+                    {/* Hover actions */}
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={e => handleRenameStart(e, chat.id, chat.title)}
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-surface-active"
+                        title="Rename"
+                      >
+                        <Edit2 className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={e => handleDelete(e, chat.id)}
+                        className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default SessionSidebar;

@@ -1,0 +1,56 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Full desktop permissions for Code Scout",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        { "name": "sh",   "cmd": "sh",   "args": true, "sidecar": false },
+        { "name": "bash", "cmd": "bash", "args": true, "sidecar": false },
+        { "name": "zsh",  "cmd": "zsh",  "args": true, "sidecar": false },
+        { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },
+        { "name": "pwsh", "cmd": "pwsh", "args": true, "sidecar": false },
+        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        { "name": "sh",   "cmd": "sh",   "args": true, "sidecar": false },
+        { "name": "bash", "cmd": "bash", "args": true, "sidecar": false },
+        { "name": "zsh",  "cmd": "zsh",  "args": true, "sidecar": false },
+        { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },
+        { "name": "pwsh", "cmd": "pwsh", "args": true, "sidecar": false },
+        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false }
+      ]
+    },
+    "shell:allow-kill",
+    "shell:allow-stdin-write",
+    "shell:allow-open",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-write-file",
+    "fs:allow-read-dir",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-exists",
+    "fs:allow-rename",
+    "fs:allow-stat",
+    "fs:scope-home-recursive",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "/tmp/**" }
+      ]
+    },
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

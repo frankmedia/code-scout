@@ -1,0 +1,269 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Dark (default) ───────────────────────────────────────────────────── */
+  :root {
+    --background: 220 16% 10%;
+    --foreground: 220 13% 91%;
+
+    --card: 220 16% 13%;
+    --card-foreground: 220 13% 91%;
+
+    --popover: 220 16% 13%;
+    --popover-foreground: 220 13% 91%;
+
+    --primary: 174 72% 52%;
+    --primary-foreground: 220 16% 6%;
+
+    --secondary: 220 16% 16%;
+    --secondary-foreground: 220 13% 75%;
+
+    --muted: 220 14% 16%;
+    --muted-foreground: 220 10% 50%;
+
+    --accent: 265 60% 58%;
+    --accent-foreground: 220 13% 95%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 18%;
+    --input: 220 14% 18%;
+    --ring: 174 72% 52%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 220 16% 8%;
+    --sidebar-foreground: 220 13% 75%;
+    --sidebar-primary: 174 72% 52%;
+    --sidebar-primary-foreground: 220 16% 6%;
+    --sidebar-accent: 220 16% 14%;
+    --sidebar-accent-foreground: 220 13% 91%;
+    --sidebar-border: 220 14% 15%;
+    --sidebar-ring: 174 72% 52%;
+
+    --surface-editor: 220 16% 11%;
+    --surface-panel: 220 16% 9%;
+    --surface-hover: 220 14% 16%;
+    --surface-active: 220 14% 20%;
+    --tab-active: 174 72% 52%;
+    --tab-inactive: 220 10% 50%;
+    --success: 142 60% 45%;
+    --warning: 38 92% 55%;
+    --info: 210 72% 55%;
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Light Blue ───────────────────────────────────────────────────────── */
+  :root[data-theme="blue"] {
+    --background: 210 18% 98%;
+    --foreground: 220 20% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 13%;
+
+    --primary: 217 78% 52%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 18% 93%;
+    --secondary-foreground: 220 15% 26%;
+
+    --muted: 210 15% 95%;
+    --muted-foreground: 220 10% 48%;
+
+    --accent: 265 55% 52%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 210 14% 88%;
+    --input: 210 14% 97%;
+    --ring: 217 78% 52%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 210 20% 95%;
+    --sidebar-foreground: 220 15% 26%;
+    --sidebar-primary: 217 78% 52%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 18% 91%;
+    --sidebar-accent-foreground: 220 20% 13%;
+    --sidebar-border: 210 14% 88%;
+    --sidebar-ring: 217 78% 52%;
+
+    --surface-editor: 0 0% 100%;
+    --surface-panel: 210 18% 96%;
+    --surface-hover: 210 18% 93%;
+    --surface-active: 210 18% 89%;
+    --tab-active: 217 78% 52%;
+    --tab-inactive: 220 10% 52%;
+    --success: 142 55% 36%;
+    --warning: 38 85% 42%;
+    --info: 217 78% 50%;
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Light Grey ───────────────────────────────────────────────────────── */
+  :root[data-theme="pink"] {
+    --background: 220 10% 95%;
+    --foreground: 220 15% 14%;
+
+    --card: 220 10% 99%;
+    --card-foreground: 220 15% 14%;
+
+    --popover: 220 10% 99%;
+    --popover-foreground: 220 15% 14%;
+
+    --primary: 174 62% 38%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 10% 89%;
+    --secondary-foreground: 220 12% 24%;
+
+    --muted: 220 10% 92%;
+    --muted-foreground: 220 8% 46%;
+
+    --accent: 265 55% 52%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 10% 83%;
+    --input: 220 10% 96%;
+    --ring: 174 62% 38%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 220 12% 91%;
+    --sidebar-foreground: 220 12% 24%;
+    --sidebar-primary: 174 62% 38%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 10% 87%;
+    --sidebar-accent-foreground: 220 15% 14%;
+    --sidebar-border: 220 10% 83%;
+    --sidebar-ring: 174 62% 38%;
+
+    --surface-editor: 220 10% 98%;
+    --surface-panel: 220 12% 92%;
+    --surface-hover: 220 10% 89%;
+    --surface-active: 220 10% 85%;
+    --tab-active: 174 62% 38%;
+    --tab-inactive: 220 8% 48%;
+    --success: 142 55% 36%;
+    --warning: 38 85% 42%;
+    --info: 217 75% 50%;
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* ── Light Yellow (Cream) ─────────────────────────────────────────────── */
+  :root[data-theme="yellow"] {
+    --background: 40 16% 98%;
+    --foreground: 25 18% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 25 18% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 25 18% 13%;
+
+    --primary: 38 78% 46%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 40 16% 93%;
+    --secondary-foreground: 25 14% 26%;
+
+    --muted: 40 12% 95%;
+    --muted-foreground: 25 8% 48%;
+
+    --accent: 174 55% 38%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 38 12% 88%;
+    --input: 40 12% 97%;
+    --ring: 38 78% 46%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 40 18% 95%;
+    --sidebar-foreground: 25 14% 26%;
+    --sidebar-primary: 38 78% 46%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 40 16% 91%;
+    --sidebar-accent-foreground: 25 18% 13%;
+    --sidebar-border: 38 12% 88%;
+    --sidebar-ring: 38 78% 46%;
+
+    --surface-editor: 0 0% 100%;
+    --surface-panel: 40 16% 96%;
+    --surface-hover: 40 16% 93%;
+    --surface-active: 40 16% 89%;
+    --tab-active: 38 78% 46%;
+    --tab-inactive: 25 8% 52%;
+    --success: 142 55% 36%;
+    --warning: 38 78% 42%;
+    --info: 217 75% 50%;
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--surface-panel));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Plan step animation */
+@keyframes step-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.animate-step-pulse {
+  animation: step-pulse 1.5s ease-in-out infinite;
+}
+

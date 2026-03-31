@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Code Scout uses the microphone so you can dictate commands and questions to the AI assistant.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Code Scout uses speech recognition to convert your voice into text for AI commands.</string>
+</dict>
+</plist>

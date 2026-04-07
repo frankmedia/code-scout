@@ -1,12 +1,14 @@
-import { Component, type ErrorInfo, type ReactNode, useEffect } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Outlet, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import Index from "./pages/Index.tsx";
 import NotFound from "./pages/NotFound.tsx";
-import { useModelStore } from "@/store/modelStore";
+import CodeScoutLanding from "./pages/CodeScoutLanding.tsx";
+import CodeScoutDownload from "./pages/CodeScoutDownload.tsx";
+import WorkbenchRoot from "./pages/WorkbenchRoot.tsx";
+import { LoginGate } from "@/components/auth/LoginGate";
 
 // ─── Root Error Boundary ──────────────────────────────────────────────────────
 // Catches any unhandled React render/lifecycle error and shows a readable
@@ -67,32 +69,30 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundary
   }
 }
 
-// ─── Startup stats refresh ────────────────────────────────────────────────────
-// Runs once when the app mounts. Refreshes all enabled models that haven't
-// been refreshed in the last 10 minutes, staggered to avoid API rate limits.
-
-function useStartupModelRefresh() {
-  const refreshAllEnabledModels = useModelStore(s => s.refreshAllEnabledModels);
-  useEffect(() => {
-    // Small delay so Zustand persist can rehydrate before we start fetching
-    const t = setTimeout(() => refreshAllEnabledModels(10 * 60 * 1000), 1500);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const queryClient = new QueryClient();
 
+function LoginGateLayout() {
+  return (
+    <LoginGate>
+      <Outlet />
+    </LoginGate>
+  );
+}
+
 function AppInner() {
-  useStartupModelRefresh();
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Index />} />
-        {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-        <Route path="*" element={<NotFound />} />
+        <Route path="/code-scout" element={<CodeScoutLanding />} />
+        <Route path="/code-scout/" element={<CodeScoutLanding />} />
+        <Route path="/code-scout/download" element={<CodeScoutDownload />} />
+        <Route path="/code-scout/download/" element={<CodeScoutDownload />} />
+        <Route element={<LoginGateLayout />}>
+          <Route index element={<WorkbenchRoot />} />
+          <Route path="*" element={<NotFound />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );

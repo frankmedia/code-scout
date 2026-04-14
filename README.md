@@ -1,3 +1,2 @@
-# Welcome to your Lovable project
+# Code Scout
 
-TODO: Document your project here

@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "tauri": "tauri",
     "tauri:dev": "npm run tauri:icon && tauri dev",
     "tauri:build": "npm run tauri:icon && tauri build",
     "tauri:icon": "node scripts/generate-app-icon.mjs"

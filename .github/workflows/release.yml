@@ -64,6 +64,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Generate app icons
+        run: npm run tauri:icon
+
       # ── macOS signing ──────────────────────────────────────────────────
       - name: Import macOS signing certificate
         if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''
@@ -93,7 +96,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tauriScript: npm run tauri:build
+          tauriScript: npm run tauri
           tagName: ${{ github.ref_name }}
           releaseName: "Code Scout ${{ github.ref_name }}"
           releaseBody: "See the assets below to download for your platform."

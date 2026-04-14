@@ -105,5 +105,5 @@ Or use the **Actions** tab in the browser.
 | Push rejected (workflow scope) | PAT with **`workflow`** scope, or non-OAuth push path |
 | `npm ci` fails on CI | Ensure `package-lock.json` is committed and in sync with `package.json` |
 | `bun` not found on Windows CI | If the repo has `bun.lock`, `tauri-action` may pick Bun. Workflows set `tauriScript: npm run tauri` (must not include `build`; the action appends it). |
-| Tauri build missing icons | CI runs `npm run tauri:icon` before `tauri-action`; ensure `public/logo.svg` exists. |
+| Tauri build missing icons | Ensure `src-tauri/icons/icon.ico` (and related assets) are committed. Do not rely on `tauri:icon` in CI on Windows — `generate-app-icon.mjs` uses `npx` in a way that can fail on Windows runners. |
 | Windows build missing WebView2 | `windows-latest` images include WebView2 runtime; if you see runtime errors, check Tauri docs for bundled vs. evergreen runtime |

@@ -64,9 +64,6 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Generate app icons
-        run: npm run tauri:icon
-
       # ── macOS signing ──────────────────────────────────────────────────
       - name: Import macOS signing certificate
         if: matrix.platform == 'macos-latest' && env.APPLE_CERTIFICATE != ''

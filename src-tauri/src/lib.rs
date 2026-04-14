@@ -230,6 +230,27 @@ async fn transcribe_audio_native(
     audio_base64: String,
     ext: String,
 ) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&app, &audio_base64, &ext);
+        return Err(
+            "ERR:not_supported:Native speech-to-text (scout-stt) is only available on macOS."
+                .to_string(),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        transcribe_audio_native_macos(app, audio_base64, ext).await
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn transcribe_audio_native_macos(
+    app: tauri::AppHandle,
+    audio_base64: String,
+    ext: String,
+) -> Result<String, String> {
     use tauri_plugin_shell::ShellExt;
 
     // ── 1. Decode base64 → raw bytes ────────────────────────────────────────

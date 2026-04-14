@@ -1,0 +1,63 @@
+# Windows-only CI build (Option A) — no Apple secrets, no Tauri updater signing.
+# Trigger: GitHub → Actions → "Build Windows" → Run workflow.
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute release tag
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "tag=v${VERSION}-windows-ci-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: x86_64-pc-windows-msvc
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri app (Windows, unsigned)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: "Code Scout v${{ steps.meta.outputs.version }} (Windows CI)"
+          releaseBody: |
+            Unsigned Windows build from GitHub Actions (manual workflow).
+
+            **SmartScreen:** Windows may show a warning on first launch — choose "More info" → "Run anyway" until you add code signing.
+
+            Tag: ${{ steps.meta.outputs.tag }}
+          releaseDraft: true
+          prerelease: true
+          includeUpdaterJson: false
+          args: --target x86_64-pc-windows-msvc

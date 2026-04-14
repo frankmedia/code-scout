@@ -44,13 +44,17 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # Icons must exist before tauri build; tauri-action only runs `tauri build` (not npm's tauri:build).
+      - name: Generate app icons
+        run: npm run tauri:icon
+
       - name: Build Tauri app (Windows, unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Repo has bun.lock; tauri-action would pick bun, which is not installed on runners.
-          tauriScript: npm run tauri:build
+          # bun.lock exists; tauri-action would use bun otherwise. Prefix must not include `build` (see tauri-action README).
+          tauriScript: npm run tauri
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Code Scout v${{ steps.meta.outputs.version }} (Windows CI)"
           releaseBody: |

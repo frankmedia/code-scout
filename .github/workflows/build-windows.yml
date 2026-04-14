@@ -49,6 +49,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Repo has bun.lock; tauri-action would pick bun, which is not installed on runners.
+          tauriScript: npm run tauri:build
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Code Scout v${{ steps.meta.outputs.version }} (Windows CI)"
           releaseBody: |

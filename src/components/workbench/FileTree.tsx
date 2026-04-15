@@ -77,9 +77,19 @@ const TreeNode = ({ node, depth = 0, changedFiles }: { node: FileNode; depth?: n
             <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
           )}
         </button>
-        {expanded && node.children?.map(child => (
-          <TreeNode key={child.path} node={child} depth={depth + 1} changedFiles={changedFiles} />
-        ))}
+        {expanded &&
+          (node.children && node.children.length > 0 ? (
+            node.children.map(child => (
+              <TreeNode key={child.path} node={child} depth={depth + 1} changedFiles={changedFiles} />
+            ))
+          ) : (
+            <div
+              className="py-0.5 text-[10px] text-muted-foreground/80 italic"
+              style={{ paddingLeft: `${(depth + 1) * 10 + 18}px` }}
+            >
+              Empty folder
+            </div>
+          ))}
       </div>
     );
   }

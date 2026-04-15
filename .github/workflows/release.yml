@@ -4,7 +4,8 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
+  # Intentionally no workflow_dispatch: ref would be a branch (e.g. main) and
+  # tauri-action would use tagName=main — invalid for releases. Ship with `git push origin vX.Y.Z`.
 
 permissions:
   contents: write
@@ -68,12 +69,17 @@ jobs:
       # `secrets.*` is required here — `env.APPLE_CERTIFICATE` is never set on the job,
       # so the old condition skipped import while still passing APPLE_SIGNING_IDENTITY
       # to the build, which breaks codesign (identity not in keychain).
+      # Note: `secrets` must not appear in `if:` (GitHub rejects the workflow → 0 jobs).
       - name: Import macOS signing certificate
-        if: matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "No APPLE_CERTIFICATE secret — skipping keychain import (unsigned mac build)."
+            exit 0
+          fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p actions build.keychain
           security default-keychain -s build.keychain

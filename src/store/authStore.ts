@@ -1,23 +1,17 @@
 /**
  * authStore — persisted login state for Code Scout.
  *
- * When running inside Tauri, credentials are verified against the MySQL
- * backend via `db_login` / `db_register` Tauri commands.
- * Falls back to a hardcoded allow-list when the backend is unavailable
- * (e.g. running in the browser or before the DB pool is ready).
+ * Authenticates against the hosted API at llmscout.co/api/codescout.
+ * Falls back to a hardcoded allow-list when the API is unreachable
+ * (e.g. no network).
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Inline isTauri check to avoid circular dependency through @/lib/tauri → workbenchStore
-function isTauri(): boolean {
-  if (typeof window === 'undefined') return false;
-  const w = window as unknown as { isTauri?: boolean };
-  return Boolean(w.isTauri || '__TAURI_INTERNALS__' in window);
-}
+const AUTH_API = 'https://llmscout.co/api/codescout';
 
 // ---------------------------------------------------------------------------
-// Offline fallback — used when the MySQL backend is unreachable.
+// Offline fallback — used when the hosted API is unreachable.
 // ---------------------------------------------------------------------------
 const OFFLINE_USERS: Array<{ email: string; password: string }> = [
   { email: 'frank@orchidbox.com', password: 'limited1' },
@@ -30,18 +24,32 @@ function checkOffline(email: string, password: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Tauri invoke helpers
+// API helpers
 // ---------------------------------------------------------------------------
 
-interface DbUser {
+interface ApiUser {
   id: number;
   username: string;
   accountType: string;
 }
 
-async function tauriInvoke<T>(cmd: string, args: Record<string, string>): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<T>(cmd, args);
+interface ApiResponse {
+  ok?: boolean;
+  error?: string;
+  user?: ApiUser;
+}
+
+async function authFetch(endpoint: string, username: string, password: string): Promise<ApiResponse> {
+  const res = await fetch(`${AUTH_API}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const json: ApiResponse = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json.error || `Request failed (${res.status})`);
+  }
+  return json;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,9 +63,7 @@ export interface AuthUser {
 
 interface AuthState {
   user: AuthUser | null;
-  /** Login with email + password. Async because it may call the backend. */
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  /** Register a new account via the backend. */
   register: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
 }
@@ -71,47 +77,37 @@ export const useAuthStore = create<AuthState>()(
         const username = email.toLowerCase().trim();
         const pw = password.trim();
 
-        // Try Tauri backend first
-        if (isTauri()) {
-          try {
-            const u = await tauriInvoke<DbUser>('db_login', { username, password: pw });
-            set({ user: { email: u.username, accountType: u.accountType } });
+        try {
+          const data = await authFetch('login', username, pw);
+          if (data.user) {
+            set({ user: { email: data.user.username, accountType: data.user.accountType } });
             return { ok: true };
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            // If the DB is simply unreachable, fall through to offline check
-            if (!msg.includes('Invalid username') && !msg.includes('not found')) {
-              // Genuine backend error — try offline fallback
-              if (checkOffline(username, pw)) {
-                set({ user: { email: username } });
-                return { ok: true };
-              }
-              return { ok: false, error: msg };
-            }
-            return { ok: false, error: 'Invalid username or password' };
           }
+          return { ok: false, error: 'Unexpected response from server' };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Network failure — try offline fallback
+          if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
+            if (checkOffline(username, pw)) {
+              set({ user: { email: username } });
+              return { ok: true };
+            }
+          }
+          return { ok: false, error: msg };
         }
-
-        // Browser / non-Tauri: offline only
-        if (checkOffline(username, pw)) {
-          set({ user: { email: username } });
-          return { ok: true };
-        }
-        return { ok: false, error: 'Invalid email or password' };
       },
 
       register: async (email, password) => {
         const username = email.toLowerCase().trim();
         const pw = password.trim();
 
-        if (!isTauri()) {
-          return { ok: false, error: 'Registration requires the desktop app' };
-        }
-
         try {
-          const u = await tauriInvoke<DbUser>('db_register', { username, password: pw });
-          set({ user: { email: u.username, accountType: u.accountType } });
-          return { ok: true };
+          const data = await authFetch('register', username, pw);
+          if (data.user) {
+            set({ user: { email: data.user.username, accountType: data.user.accountType } });
+            return { ok: true };
+          }
+          return { ok: false, error: 'Unexpected response from server' };
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           return { ok: false, error: msg };
@@ -122,12 +118,10 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'code-scout-auth',
-      version: 2,
+      version: 3,
       partialize: (state) => ({ user: state.user }),
       migrate: (persisted: unknown, version: number) => {
-        // v1 → v2: login became async, added register. Only `user` is persisted so
-        // the migration just passes through.
-        if (version < 2) {
+        if (version < 3) {
           const old = persisted as { user?: { email: string } | null };
           return { user: old?.user ?? null } as Partial<AuthState>;
         }

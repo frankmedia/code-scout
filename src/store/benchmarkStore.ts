@@ -23,7 +23,8 @@ interface BenchmarkStoreState {
   selectedTestIds: string[];
 
   // Actions
-  setSelectedModels: (ids: string[]) => void;
+  /** Pass an array, or an updater like React `setState` (used when syncing with the model list). */
+  setSelectedModels: (ids: string[] | ((prev: string[]) => string[])) => void;
   setSelectedTests: (ids: string[]) => void;
   startRun: () => Promise<void>;
   abortRun: () => void;
@@ -36,6 +37,11 @@ interface BenchmarkStoreState {
 
 // Held outside Zustand so it's not serialized
 let abortController: AbortController | null = null;
+
+function asStringArray(v: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(v)) return fallback;
+  return v.filter((x): x is string => typeof x === 'string');
+}
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
 
@@ -78,7 +84,11 @@ export const useBenchmarkStore = create<BenchmarkStoreState>()(
       selectedModelIds: [],
       selectedTestIds: ALL_BENCHMARK_TESTS.map(t => t.id),
 
-      setSelectedModels: (ids) => set({ selectedModelIds: ids }),
+      setSelectedModels: (ids) => set(s => {
+        const prev = Array.isArray(s.selectedModelIds) ? s.selectedModelIds : [];
+        const next = typeof ids === 'function' ? ids(prev) : ids;
+        return { selectedModelIds: Array.isArray(next) ? next : prev };
+      }),
       setSelectedTests: (ids) => set({ selectedTestIds: ids }),
 
       abortRun: () => {
@@ -210,6 +220,19 @@ export const useBenchmarkStore = create<BenchmarkStoreState>()(
     }),
     {
       name: 'scout-benchmarks',
+      merge: (persisted, current) => {
+        const p = persisted as Partial<
+          Pick<BenchmarkStoreState, 'runs' | 'selectedModelIds' | 'selectedTestIds'>
+        > | null;
+        if (!p || typeof p !== 'object') return current;
+        return {
+          ...current,
+          ...p,
+          runs: Array.isArray(p.runs) ? p.runs.slice(0, 50) : current.runs,
+          selectedModelIds: asStringArray(p.selectedModelIds, current.selectedModelIds),
+          selectedTestIds: asStringArray(p.selectedTestIds, current.selectedTestIds),
+        };
+      },
       // Only persist the run history and selections, not transient progress
       partialize: (s) => ({
         runs: s.runs.slice(0, 50), // keep latest 50 runs for historical comparison
@@ -222,9 +245,21 @@ export const useBenchmarkStore = create<BenchmarkStoreState>()(
 
 // After localStorage rehydrate: empty model selection means "not chosen yet" → select all enabled models
 useBenchmarkStore.persist.onFinishHydration(() => {
+  const {
+    selectedModelIds,
+    selectedTestIds,
+    setSelectedModels,
+    setSelectedTests,
+  } = useBenchmarkStore.getState();
+  if (!Array.isArray(selectedModelIds)) {
+    setSelectedModels([]);
+  }
+  if (!Array.isArray(selectedTestIds)) {
+    setSelectedTests(ALL_BENCHMARK_TESTS.map(t => t.id));
+  }
   const enabled = useModelStore.getState().models.filter(m => m.enabled).map(m => m.id);
-  const { selectedModelIds, setSelectedModels } = useBenchmarkStore.getState();
-  if (selectedModelIds.length === 0 && enabled.length > 0) {
+  const sel = useBenchmarkStore.getState().selectedModelIds;
+  if (sel.length === 0 && enabled.length > 0) {
     setSelectedModels(enabled);
   }
 });

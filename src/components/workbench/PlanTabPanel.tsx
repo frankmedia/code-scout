@@ -11,10 +11,12 @@ import {
   Ban,
   ListOrdered,
   Wrench,
+  Pencil,
 } from 'lucide-react';
 import { useWorkbenchStore, PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
+import { submitPlanRevision } from '@/services/planRevisionBridge';
 
 const DESTRUCTIVE_ACTIONS = new Set(['delete_file']);
 const SHELL_ACTIONS = new Set(['run_command']);
@@ -51,6 +53,9 @@ const PlanTabPanel = () => {
 
   const getModelForRole = useModelStore(s => s.getModelForRole);
   const [skippedSteps, setSkippedSteps] = useState<Set<string>>(new Set());
+  const [showRevise, setShowRevise] = useState(false);
+  const [reviseText, setReviseText] = useState('');
+  const [reviseBusy, setReviseBusy] = useState(false);
 
   if (!currentPlan) {
     return (
@@ -143,12 +148,27 @@ const PlanTabPanel = () => {
   const handleReject = () => {
     updatePlanStatus('rejected');
     setSkippedSteps(new Set());
+    setShowRevise(false);
+    setReviseText('');
     addLog('Plan rejected by user', 'warning');
     addMessage({
       role: 'assistant',
       agent: 'orchestrator',
       content: "Plan rejected. No files were modified. Tell me what you'd like to change.",
     });
+  };
+
+  const handleRegeneratePlan = async () => {
+    const t = reviseText.trim();
+    if (!t || reviseBusy) return;
+    setReviseBusy(true);
+    try {
+      await submitPlanRevision(t);
+      setReviseText('');
+      setShowRevise(false);
+    } finally {
+      setReviseBusy(false);
+    }
   };
 
   const handleRollback = () => {
@@ -193,23 +213,58 @@ const PlanTabPanel = () => {
           </div>
 
           {isPending && (
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleExecute}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-[12px] font-semibold hover:bg-primary/90 transition-colors shadow-sm"
-              >
-                <Play className="h-4 w-4" />
-                Execute
-              </button>
-              <button
-                type="button"
-                onClick={handleReject}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-destructive/15 text-destructive text-[12px] font-medium hover:bg-destructive/25 transition-colors"
-              >
-                <X className="h-4 w-4" />
-                Reject
-              </button>
+            <div className="flex flex-col items-end gap-2 shrink-0 max-w-full">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleExecute}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-[12px] font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+                >
+                  <Play className="h-4 w-4" />
+                  Execute
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRevise(v => !v)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-foreground text-[12px] font-medium hover:bg-surface-hover transition-colors"
+                >
+                  <Pencil className="h-4 w-4" />
+                  Modify
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-destructive/15 text-destructive text-[12px] font-medium hover:bg-destructive/25 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                  Reject
+                </button>
+              </div>
+              {showRevise && (
+                <div className="w-full max-w-md flex flex-col gap-2 rounded-lg border border-border bg-card/60 p-3">
+                  <label className="text-[11px] text-muted-foreground" htmlFor="plan-revise-tab">
+                    What should change?
+                  </label>
+                  <textarea
+                    id="plan-revise-tab"
+                    value={reviseText}
+                    onChange={e => setReviseText(e.target.value)}
+                    rows={4}
+                    placeholder="Describe what you do not like or what to add/remove…"
+                    className="w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-[12px] text-foreground placeholder:text-muted-foreground/70"
+                    disabled={reviseBusy}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleRegeneratePlan()}
+                    disabled={reviseBusy || !reviseText.trim()}
+                    className="inline-flex items-center justify-center gap-1.5 self-end px-3 py-2 rounded-lg bg-primary text-primary-foreground text-[12px] font-semibold hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {reviseBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                    Regenerate plan
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

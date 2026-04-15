@@ -7,6 +7,8 @@ const SKIP_DIRS = new Set([
   '__pycache__', '.turbo', 'coverage', '.nuxt', '.output', 'out',
 ]);
 const MAX_FILES = 500;
+/** Match Tauri: allow deeper trees without returning an empty child list. */
+const MAX_DEPTH = 16;
 const MAX_FILE_SIZE = 2_000_000; // 2 MB
 
 function detectLang(filename: string): string {
@@ -29,7 +31,7 @@ async function readDirRecursive(
   depth: number,
   counter: { files: number },
 ): Promise<FileNode[]> {
-  if (depth > 8 || counter.files > MAX_FILES) return [];
+  if (depth > MAX_DEPTH) return [];
 
   const nodes: FileNode[] = [];
 
@@ -48,8 +50,8 @@ async function readDirRecursive(
       );
       nodes.push({ name, path, type: 'folder', children });
     } else {
+      if (counter.files >= MAX_FILES) continue;
       counter.files++;
-      if (counter.files > MAX_FILES) continue;
 
       try {
         const file = await (handle as FileSystemFileHandle).getFile();

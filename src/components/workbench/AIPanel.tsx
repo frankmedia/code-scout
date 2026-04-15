@@ -14,6 +14,7 @@ import { chatMessagesToApiMessages } from '@/services/chatApiMessages';
 import { ALL_CHAT_TOOLS, invocationsFromToolCalls, parseTextToolCalls } from '@/services/chatTools';
 import { generateMockPlan } from '@/services/planGenerator';
 import { orchestrator } from '@/services/orchestrator';
+import { registerPlanRevisionHandler } from '@/services/planRevisionBridge';
 import { getWebResearchContext } from '@/services/agentExecutor';
 import { getOrIndexProject, getBudgetedSkeletonText, resolveEffectiveRoot } from '@/services/memoryManager';
 import { buildInstallContext } from '@/services/installTracker';
@@ -623,6 +624,9 @@ const AIPanel = () => {
   const requestStartTime = useRef<number>(0);
   const thinkingStartMsRef = useRef<number>(0);
   const planHadError = useRef(false);
+  /** Last `userGoal` string passed to the planner that produced the current pending plan (for revisions). */
+  const lastSubmittedPlannerGoalRef = useRef('');
+  const runPlanningWithUserGoalRef = useRef<(userGoal: string) => Promise<void>>(async () => {});
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textFileInputRef = useRef<HTMLInputElement>(null);
@@ -839,6 +843,7 @@ const AIPanel = () => {
     streamFirstChunkAtRef.current = 0;
     streamCharsReceivedRef.current = 0;
     planHadError.current = false;
+    lastSubmittedPlannerGoalRef.current = '';
     chatStreamAbortRef.current?.abort();
     chatStreamAbortRef.current = null;
   }, [chatSessionEpoch]);
@@ -1093,6 +1098,8 @@ const AIPanel = () => {
     return { ok: true, userMsg, images: imageParts, flow };
   };
 
+  const fakePlanDelay = () => new Promise(r => setTimeout(r, 1000));
+
   const clearComposerAfterSend = () => {
     setInput('');
     setStreamError(null);
@@ -1127,7 +1134,7 @@ const AIPanel = () => {
     saveCurrentChat(useWorkbenchStore.getState().messages);
   };
 
-  const handlePlanGeneration = async (userMsg: string) => {
+  runPlanningWithUserGoalRef.current = async (userGoal: string) => {
     const model = getActiveModel('orchestrator');
 
     if (!model || !model.enabled) {
@@ -1146,7 +1153,7 @@ const AIPanel = () => {
         runCommands: mockMemory.repoMap.runCommands,
         hasExistingProject: mockFlat.some(f => /\.(jsx?|tsx?|py|rs|go)$/.test(f.path)) || mockFlat.some(f => f.name === 'package.json'),
       };
-      const plan = generateMockPlan(userMsg, mockIdentity, files);
+      const plan = generateMockPlan(userGoal, mockIdentity, files);
       setCurrentPlan(plan);
       const mockStepLines = plan.steps.map((s, i) => {
         const icon = s.action === 'run_command' ? '`$`' : s.action === 'create_file' ? '`+`' : s.action === 'delete_file' ? '`-`' : '`~`';
@@ -1160,6 +1167,7 @@ const AIPanel = () => {
         showPlanCard: true,
       });
       addLog(`Plan generated (mock): ${plan.steps.length} steps`, 'info');
+      lastSubmittedPlannerGoalRef.current = userGoal;
       setIsThinking(false);
       return;
     }
@@ -1196,18 +1204,19 @@ const AIPanel = () => {
 
     planHadError.current = false;
 
-    const lastUser = [...useWorkbenchStore.getState().messages].reverse().find(m => m.role === 'user');
+    const msgs = useWorkbenchStore.getState().messages;
+    const lastUserWithImages = [...msgs].reverse().find(m => m.role === 'user' && m.images && m.images.length > 0);
 
     const planResult = await orchestrator.startTask(
       {
-        userGoal: userMsg,
+        userGoal,
         files,
         projectName,
         skillMd: memory.skillMd,
         projectIdentity,
         orchestratorModel: model,
         projectPath: projectPath ?? undefined,
-        userImages: lastUser?.images,
+        userImages: lastUserWithImages?.images,
       },
       {
         onStatus: (s) => {
@@ -1242,108 +1251,18 @@ const AIPanel = () => {
             addMessage({
               role: 'assistant',
               agent: 'orchestrator',
-              content: `Executing **${p.steps.length} steps**...\n\n${stepLines}`,
+              content:
+                `Here is a **${p.steps.length}-step plan**. Review it in the card below.\n\n${stepLines}\n\n` +
+                '> **Nothing runs until you approve** — use **Execute** to run the plan, **Modify** to describe what to change and get a revised plan, or **Reject** to cancel.',
               showPlanCard: true,
             });
           }
-          addLog(`Plan ready: ${p.steps.length} steps`, 'success');
+          addLog(`Plan ready: ${p.steps.length} steps (awaiting approval)`, 'success');
           planHadError.current = false;
+          lastSubmittedPlannerGoalRef.current = userGoal;
 
           if (!wasFallbackPlan) {
-            const { updatePlanStatus, updateStepStatus, updateStepLiveOutput, updateStepServerUrl, addMessage: addMsg, addLog: addL } = useWorkbenchStore.getState();
-            const coderModel = getActiveModel('coder');
-            updatePlanStatus('executing');
-            try {
-              await orchestrator.executePlan(p, new Set(), {
-                onStepStart: (step) => updateStepStatus(step.id, 'running'),
-
-                onStepDone: (step) => updateStepStatus(step.id, 'done'),
-                onStepError: (step, _idx, err) => updateStepStatus(step.id, 'error', err),
-                onRepairStart: (step) => updateStepStatus(step.id, 'repairing'),
-                onStepOutput: (step, line) => updateStepLiveOutput(step.id, line),
-                onStepServerUrl: (step, url) => updateStepServerUrl(step.id, url),
-                onPlanStoppedEarly: (reason) => {
-                  updatePlanStatus('done');
-                  const cancelled = reason === 'Cancelled by user';
-                  addMsg({
-                    role: 'assistant',
-                    agent: 'coder',
-                    content: cancelled
-                      ? '**Stopped** — plan execution was cancelled.'
-                      : `**Plan stopped** — validation or repair failed.\n\n${reason.slice(0, 3500)}`,
-                  });
-                },
-                onComplete: () => {
-                  updatePlanStatus('done');
-                  const planState = useWorkbenchStore.getState().currentPlan;
-                  const failed = planState?.steps.filter(s => s.status === 'error').length ?? 0;
-                  const serverSteps = planState?.steps.filter(s => s.serverUrl) ?? [];
-                  const urlList = serverSteps.map(s => `**${s.serverUrl}**`).join(' · ');
-
-                  const stepResults = (planState?.steps ?? []).map((s, i) => {
-                    let result = `Step ${i + 1}: ${s.description} — ${s.status}`;
-                    if (s.fullOutput?.trim()) result += `\nOutput:\n${s.fullOutput.trim().slice(0, 2000)}`;
-                    if (s.errorMessage) result += `\nError: ${s.errorMessage}`;
-                    return result;
-                  }).join('\n\n');
-
-                  const summaryModel = getActiveModel('coder');
-                  if (summaryModel?.enabled && stepResults) {
-                    const originalQuestion = [...useWorkbenchStore.getState().messages]
-                      .reverse()
-                      .find(m => m.role === 'user')?.content ?? '';
-
-                    // Include actual web research results so the summary model doesn't hallucinate
-                    const webCtx = getWebResearchContext();
-                    const webResearchBlock = webCtx.length > 0
-                      ? `\n\nACTUAL WEB RESEARCH RESULTS (use ONLY this data — do NOT invent or hallucinate information):\n${webCtx.join('\n---\n')}`
-                      : '';
-
-                    const summaryPrompt: ModelRequestMessage[] = [
-                      { role: 'system', content: 'You are a helpful coding assistant. The user asked a question and a plan was executed to answer it. Analyze the step results below and provide a clear, concise answer to the user\'s original question. Be direct and specific. IMPORTANT: If web search or URL fetch steps were executed, base your answer ONLY on the actual web research results provided. Do NOT make up information. If the search returned no useful results, say so honestly.' },
-                      { role: 'user', content: `Original question: ${originalQuestion}\n\nPlan execution results:\n${stepResults}${webResearchBlock}\n\nProvide a clear answer based on these results. If web research was done, cite the actual sources found. If no results were found, say "No results found" — do NOT invent information.` },
-                    ];
-                    let summaryText = '';
-                    const summarySignal = beginChatStream();
-                    callModel(
-                      modelToRequest(summaryModel, summaryPrompt, { signal: summarySignal }),
-                      (chunk) => { summaryText += chunk; },
-                      (fullText) => {
-                        addMsg({ role: 'assistant', agent: 'coder', content: fullText });
-                      },
-                      (err) => {
-                        if (err.name === 'AbortError') {
-                          addMsg({ role: 'assistant', agent: 'coder', content: '**Stopped** — summary was cancelled.' });
-                          return;
-                        }
-                        let content: string;
-                        if (failed > 0) {
-                          content = `Build finished with **${failed} failed step(s)**. Check Terminal / Logs for details.`;
-                        } else if (urlList) {
-                          content = `All steps completed! App running at ${urlList}.`;
-                        } else {
-                          content = 'All steps completed! Review the changes in the editor.';
-                        }
-                        addMsg({ role: 'assistant', agent: 'coder', content });
-                      },
-                    );
-                  } else {
-                    let content: string;
-                    if (failed > 0) {
-                      content = `Build finished with **${failed} failed step(s)**. Check Terminal / Logs for details. Use **Rollback** to undo.`;
-                    } else if (urlList) {
-                      content = `All steps completed! App running at ${urlList}. Use **Rollback** to undo.`;
-                    } else {
-                      content = 'Build complete! All steps executed. Review changes in the file tree. You can **Rollback** if needed.';
-                    }
-                    addMsg({ role: 'assistant', agent: 'coder', content });
-                  }
-                },
-                onLog: (message, type) => addL(message, type),
-              }, coderModel, projectIdentity);
-            } catch (err) {
-              addL(`Build error: ${err instanceof Error ? err.message : String(err)}`, 'error');
-            }
+            useWorkbenchStore.getState().updatePlanStatus('pending');
           }
         },
         onError: (err) => {
@@ -1365,6 +1284,55 @@ const AIPanel = () => {
     setPlanActivities(prev => prev.map(a => ({ ...a, done: true })));
     setIsThinking(false);
   };
+
+  const handlePlanGeneration = async (userMsg: string) => {
+    await runPlanningWithUserGoalRef.current(userMsg);
+  };
+
+  const handlePlanRevision = useCallback(async (feedback: string) => {
+    const trimmed = feedback.trim();
+    if (!trimmed) {
+      useWorkbenchStore.getState().addLog('Describe what to change before regenerating the plan.', 'warning');
+      return;
+    }
+    if (isThinkingRef.current) {
+      useWorkbenchStore.getState().addLog('Planner is busy — wait for it to finish.', 'warning');
+      return;
+    }
+    const ws = useWorkbenchStore.getState();
+    const p = ws.currentPlan;
+    if (!p || p.status !== 'pending') return;
+    const base = lastSubmittedPlannerGoalRef.current.trim();
+    if (!base) {
+      ws.addLog('Nothing to revise yet — wait for a plan or send a new request from chat.', 'warning');
+      return;
+    }
+    const stepSummary = p.steps
+      .map((s, i) => {
+        const tail = [s.path && `path: ${s.path}`, s.command && `cmd: ${s.command}`].filter(Boolean).join(' · ');
+        return `${i + 1}. [${s.action}] ${s.description}${tail ? ` (${tail})` : ''}`;
+      })
+      .join('\n');
+    const revisedGoal =
+      `${base}\n\n---\n` +
+      `The user has not executed this plan yet; treat the repo as unchanged.\n\n` +
+      `Previous plan summary: ${p.summary}\nPrevious steps:\n${stepSummary}\n\n` +
+      `User feedback — produce a **revised** plan that incorporates this:\n${trimmed}\n\n` +
+      `Reply with a full replacement plan (do not assume prior steps ran).`;
+
+    ws.addMessage({ role: 'user', content: `**Plan revision:**\n${trimmed}` });
+    ws.addLog('Regenerating plan from your feedback…', 'info');
+    setPlanActivities([]);
+    setIsThinking(true);
+    requestStartTime.current = Date.now();
+    await runPlanningWithUserGoalRef.current(revisedGoal);
+    saveCurrentChat(useWorkbenchStore.getState().messages);
+  }, [setIsThinking, saveCurrentChat]);
+
+  useEffect(() => {
+    registerPlanRevisionHandler(handlePlanRevision);
+    return () => registerPlanRevisionHandler(null);
+  }, [handlePlanRevision]);
 
   const resolveChatModel = useCallback((chatRole: 'orchestrator' | 'coder') => {
     const ms = useModelStore.getState();
@@ -1700,8 +1668,6 @@ const AIPanel = () => {
       onTokensFromStream,
     );
   };
-
-  const fakePlanDelay = () => new Promise(r => setTimeout(r, 1000));
 
   const hasComposableInput = Boolean(input.trim() || pendingImages.length > 0 || pendingTextFiles.length > 0);
   const canSendIdle = hasComposableInput && !isAgentBusy;

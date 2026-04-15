@@ -63,6 +63,32 @@ function clipTimelineText(s: string, max: number): string {
 const MODEL_WAIT_KEEPALIVE_MS = 20_000;
 
 /**
+ * Appended to the `delegate_to_coder` tool result so the orchestrator must explicitly
+ * choose finish vs re-delegate instead of drifting on open-ended research.
+ */
+const POST_DELEGATE_ORCHESTRATOR_CHECKIN =
+  '\n\n---\n**Orchestrator check-in (required):** The Coder has finished this delegation (see summary above). ' +
+  'Decide now:\n' +
+  '• If the **user\'s goal is satisfied**, call `finish_task` with a short summary. Do not run exploratory tools first unless you still lack a critical fact.\n' +
+  '• If **more coding is needed**, call `delegate_to_coder` once with a focused instruction for the remaining gap.\n' +
+  'If you are blocked, call `finish_task` explaining the blocker. Avoid endless read/search loops without a new delegation or a terminal decision.';
+
+/** With `delegate_to_coder`, the orchestrator’s lean tool set has no read_file — these are “research / housekeeping” only. */
+const ORCH_NONCOMMITTAL_POST_CODER_TOOLS = new Set([
+  'web_search',
+  'fetch_url',
+  'browse_web',
+  'lookup_package',
+  'get_terminal_snapshot',
+  'save_memory',
+  'reindex_project',
+]);
+
+const POST_DELEGATE_STALL_NUDGE =
+  '**System check-in:** The Coder already handed work back, but you ran multiple research-only tool rounds without `finish_task` or a new `delegate_to_coder`. ' +
+  'Pick one now: call `finish_task` if the task is done, or `delegate_to_coder` with what is still missing. Do not keep searching without deciding.';
+
+/**
  * Returns true when the API server rejected the model's response because the
  * tool-call arguments contained malformed JSON (e.g. unescaped double quotes
  * inside a write_to_file content string).  This is a recoverable error — we
@@ -706,6 +732,11 @@ export async function runAgentToolLoop(opts: {
     ...initialMessages,
   ];
 
+  /** True after `delegate_to_coder` returns until the orchestrator runs a substantive tool or `finish_task`. */
+  let awaitingOrchestratorPostCoderDecision = false;
+  /** Consecutive orchestrator rounds that only used non-committal tools after the last Coder hand-off. */
+  let postCoderOrchestratorStallRounds = 0;
+
   let consecutiveNoTools = 0;
   let orchestratorJsonParseErrors = 0;
   /** How many verification runs in a row have passed — used to escalate the finish_task nudge */
@@ -1009,10 +1040,12 @@ export async function runAgentToolLoop(opts: {
         invocations.push(delegateInvocation);
         hasMutations = true; // coder likely wrote files — trigger verification
         callbacks.onTimeline?.(`→ delegate_to_coder · summary · «${clipTimelineText(coderSummary, 160)}»`);
+        awaitingOrchestratorPostCoderDecision = true;
+        postCoderOrchestratorStallRounds = 0;
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: `Coder completed. Summary:\n${coderSummary}`,
+          content: `Coder completed. Summary:\n${coderSummary}${POST_DELEGATE_ORCHESTRATOR_CHECKIN}`,
         });
         continue;
       }
@@ -1035,6 +1068,24 @@ export async function runAgentToolLoop(opts: {
     if (finishCall) {
       invocations.push({ id: finishCall.id, name: 'finish_task', argsJson: finishCall.function.arguments, status: 'completed', stdout: '', exitCode: 0 });
       messages.push({ role: 'tool', tool_call_id: finishCall.id, content: 'Task marked complete.' });
+      awaitingOrchestratorPostCoderDecision = false;
+      postCoderOrchestratorStallRounds = 0;
+    } else if (awaitingOrchestratorPostCoderDecision && executableCalls.length > 0) {
+      const orchNames = executableCalls.map(t => t.function.name);
+      const onlyNonCommittal = orchNames.every(n => ORCH_NONCOMMITTAL_POST_CODER_TOOLS.has(n));
+      if (onlyNonCommittal) {
+        postCoderOrchestratorStallRounds += 1;
+        if (postCoderOrchestratorStallRounds >= 2) {
+          messages.push({ role: 'user', content: POST_DELEGATE_STALL_NUDGE });
+          callbacks.onTimeline?.('Check-in: orchestrator stalled after Coder — injected decision nudge');
+          postCoderOrchestratorStallRounds = 0;
+        }
+      } else {
+        postCoderOrchestratorStallRounds = 0;
+        if (orchNames.some(n => n === 'run_terminal_cmd' || n === 'delegate_to_coder')) {
+          awaitingOrchestratorPostCoderDecision = false;
+        }
+      }
     }
 
     // ── Repetition detection ──────────────────────────────────────────────────

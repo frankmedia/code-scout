@@ -7,6 +7,7 @@ import { useState, useCallback } from 'react';
 import {
   Play,
   X,
+  Pencil,
   Circle,
   Loader2,
   CheckCircle2,
@@ -25,6 +26,7 @@ import { useWorkbenchStore, type PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
 import { callModel, modelToRequest, type ModelRequestMessage } from '@/services/modelApi';
+import { submitPlanRevision } from '@/services/planRevisionBridge';
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
   create_file: <FilePlus className="h-3 w-3" />,
@@ -66,6 +68,9 @@ export function ChatPlanCard() {
   const getModelForRole = useModelStore(s => s.getModelForRole);
 
   const [skippedSteps, setSkippedSteps] = useState<Set<string>>(new Set());
+  const [showRevise, setShowRevise] = useState(false);
+  const [reviseText, setReviseText] = useState('');
+  const [reviseBusy, setReviseBusy] = useState(false);
 
   const toggleSkip = (stepId: string) => {
     setSkippedSteps(prev => {
@@ -192,6 +197,19 @@ export function ChatPlanCard() {
     });
   }, [updatePlanStatus, addLog, addMessage]);
 
+  const handleRegeneratePlan = useCallback(async () => {
+    const t = reviseText.trim();
+    if (!t || reviseBusy) return;
+    setReviseBusy(true);
+    try {
+      await submitPlanRevision(t);
+      setReviseText('');
+      setShowRevise(false);
+    } finally {
+      setReviseBusy(false);
+    }
+  }, [reviseText, reviseBusy]);
+
   const handleRollback = useCallback(() => {
     rollbackAll();
     addLog('All changes rolled back', 'warning');
@@ -230,23 +248,58 @@ export function ChatPlanCard() {
           )}
         </div>
         {isPending && (
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={handleExecute}
-              className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              <Play className="h-3 w-3" />
-              Execute
-            </button>
-            <button
-              type="button"
-              onClick={handleReject}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-surface-hover"
-            >
-              <X className="h-3 w-3" />
-              Reject
-            </button>
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleExecute}
+                className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Play className="h-3 w-3" />
+                Execute
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRevise(v => !v)}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-surface-hover"
+              >
+                <Pencil className="h-3 w-3" />
+                Modify
+              </button>
+              <button
+                type="button"
+                onClick={handleReject}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-surface-hover"
+              >
+                <X className="h-3 w-3" />
+                Reject
+              </button>
+            </div>
+            {showRevise && (
+              <div className="w-full max-w-[min(100%,280px)] flex flex-col gap-1.5 rounded-md border border-border bg-background/80 p-2">
+                <label className="text-[10px] text-muted-foreground" htmlFor="plan-revise-chat">
+                  What should change?
+                </label>
+                <textarea
+                  id="plan-revise-chat"
+                  value={reviseText}
+                  onChange={e => setReviseText(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Skip the DB step, add tests first…"
+                  className="w-full resize-y rounded border border-border bg-background px-2 py-1.5 text-[11px] text-foreground placeholder:text-muted-foreground/70"
+                  disabled={reviseBusy}
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleRegeneratePlan()}
+                  disabled={reviseBusy || !reviseText.trim()}
+                  className="inline-flex items-center justify-center gap-1 rounded-md bg-primary/90 px-2 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary disabled:opacity-50"
+                >
+                  {reviseBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pencil className="h-3 w-3" />}
+                  Regenerate plan
+                </button>
+              </div>
+            )}
           </div>
         )}
         {isDone && fileHistory.length > 0 && (

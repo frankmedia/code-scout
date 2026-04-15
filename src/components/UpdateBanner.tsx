@@ -1,12 +1,13 @@
 /**
- * UpdateBanner — auto-update system for Code Scout.
+ * UpdateBanner — macOS in-app updates for Code Scout.
  *
- * On startup, checks a remote manifest for the latest version.
- * If newer, automatically downloads, installs, and prompts to restart.
- * Works like Claude Code's auto-updater.
+ * On startup, the native side calls GitHub
+ * `GET https://api.github.com/repos/frankmedia/code-scout/releases/latest`,
+ * compares the release tag (e.g. `v0.1.1`) to the running app version, and if newer
+ * looks for an asset named like `Code-Scout_<version>_aarch64.app.tar.gz` for download.
  *
- * Remote JSON (default: https://llmscout.co/code-scout/download/version.json):
- *   { "version": "0.2.0", "url": "https://…/Code-Scout.app.tar.gz", "notes": "…" }
+ * @see src-tauri/src/updater.rs
+ * @see https://github.com/frankmedia/code-scout/releases
  */
 import { useState, useEffect, useCallback } from 'react';
 import { X, Download, ArrowUpCircle, RefreshCw, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';

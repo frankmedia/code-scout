@@ -2,6 +2,8 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+mod updater;
+
 // ─── File tree types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -24,6 +26,8 @@ const SKIP_DIRS: &[&str] = &[
     "target", ".DS_Store",
 ];
 const MAX_FILES: usize = 600;
+/// Deeper trees (e.g. PHP / legacy repos) still need children past depth 8.
+const MAX_DEPTH: usize = 16;
 const MAX_FILE_SIZE: u64 = 2_000_000; // 2 MB
 
 fn detect_lang(filename: &str) -> &'static str {
@@ -52,7 +56,10 @@ fn read_dir_recursive(
     depth: usize,
     counter: &mut usize,
 ) -> Vec<FileEntry> {
-    if depth > 8 || *counter > MAX_FILES {
+    // Never bail out early just because the file budget is exhausted — that made
+    // sibling folders look "stuck open" with no children. We still list dirs and
+    // skip files once MAX_FILES entries are collected.
+    if depth > MAX_DEPTH {
         return vec![];
     }
 
@@ -103,10 +110,10 @@ fn read_dir_recursive(
                 children: Some(children),
             });
         } else {
-            *counter += 1;
-            if *counter > MAX_FILES {
+            if *counter >= MAX_FILES {
                 continue;
             }
+            *counter += 1;
 
             let size = std::fs::metadata(&path)
                 .map(|m| m.len())
@@ -421,6 +428,22 @@ async fn browse_web(url: String, actions_json: Option<String>) -> Result<String,
     Ok(json)
 }
 
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<updater::UpdateCheckResult, String> {
+    let v = app.package_info().version.to_string();
+    updater::check_update(&v).await
+}
+
+#[tauri::command]
+async fn download_and_install_update(download_url: String) -> Result<String, String> {
+    updater::download_and_install(&download_url).await
+}
+
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -449,6 +472,9 @@ pub fn run() {
             transcribe_audio_native,
             ensure_playwright,
             browse_web,
+            check_for_update,
+            download_and_install_update,
+            relaunch_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

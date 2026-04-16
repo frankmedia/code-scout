@@ -158,15 +158,12 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          echo "APPLE_SIGNING_IDENTITY=" >> "$GITHUB_ENV"
-          echo "APPLE_ID=" >> "$GITHUB_ENV"
-          echo "APPLE_PASSWORD=" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=" >> "$GITHUB_ENV"
           if [ "$MATRIX_PLATFORM" != "macos-latest" ]; then
             exit 0
           fi
           if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            # Empty identity makes codesign fail on bundled sidecars; `-` is ad-hoc.
+            # Ad-hoc codesign only. Do not set APPLE_ID / TEAM_ID empty — Tauri still
+            # attempts notarization and fails with "Team ID must be at least 3 characters".
             echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
             exit 0
           fi

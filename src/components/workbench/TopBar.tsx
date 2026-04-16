@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Cpu, Settings, Brain, Code, TestTube, Wifi, WifiOff, Loader2, Github, Palette, FlaskConical } from 'lucide-react';
+import { Cpu, Settings, Brain, Code, TestTube, Loader2, Github, Palette, FlaskConical, Heart } from 'lucide-react';
 import { useTheme, type Theme } from '@/hooks/useTheme';
 import { useModelStore } from '@/store/modelStore';
 import { useTaskStore } from '@/store/taskStore';
@@ -12,6 +12,7 @@ import { isTauri } from '@/lib/tauri';
 import CodeScoutLogo from '@/components/CodeScoutLogo';
 import GitStatusBar from '@/components/workbench/GitStatusBar';
 import GitSyncPanel from '@/components/workbench/GitSyncPanel';
+import { AgentHeartbeatPopover } from '@/components/workbench/AgentHeartbeatPopover';
 
 type ConnectionStatus = 'checking' | 'connected' | 'disconnected';
 
@@ -34,6 +35,8 @@ const TopBar = () => {
   const { activeCenterTab, setActiveCenterTab } = useWorkbenchStore();
   const closeProject = useProjectStore(s => s.closeProject);
   const [showGitSync, setShowGitSync] = useState(false);
+  const [showHeartbeat, setShowHeartbeat] = useState(false);
+  const aiIsStreaming = useWorkbenchStore(s => s.aiIsStreaming);
 
   const orchestratorModel = getModelForRole('orchestrator');
   const coder = getModelForRole('coder');
@@ -192,41 +195,26 @@ const TopBar = () => {
           <span className="hidden lg:inline">Benchmark</span>
         </button>
 
-        {/* Connection status */}
-        <button
-          onClick={() => connStatus === 'disconnected' && setSettingsOpen(true)}
-          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${statusColors[connStatus]} ${connStatus === 'disconnected' ? 'hover:bg-destructive/10 cursor-pointer' : 'cursor-default'}`}
-          title={connError || statusLabels[connStatus]}
-        >
-          {connStatus === 'connected' ? (
-            <Wifi className="h-3 w-3" />
-          ) : connStatus === 'checking' ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <WifiOff className="h-3 w-3" />
-          )}
-          <span className="hidden lg:inline">
-            {connStatus === 'disconnected' && connError
-              ? connError.length > 28 ? connError.slice(0, 28) + '…' : connError
-              : statusLabels[connStatus]}
-          </span>
-        </button>
-
-        {/* Active model — only show the orchestrator (the one actually used) */}
-        {orchestratorModel && (
-          <div
-            className="hidden md:flex items-center gap-1.5 bg-secondary px-2.5 py-1 rounded-lg cursor-default"
-            title={`Active model: ${orchestratorModel.name}\nEndpoint: ${orchestratorModel.endpoint ?? 'default'}\n\nCoder (${coder?.modelId ?? 'none'}) and Tester (${tester?.modelId ?? 'none'}) are configured but not yet dispatched.`}
+        {/* Heartbeat — agent loop settings */}
+        <div className="relative">
+          <button
+            onClick={() => setShowHeartbeat(p => !p)}
+            title="Agent heartbeat & loop settings"
+            className={`p-1.5 rounded-lg transition-colors ${
+              showHeartbeat ? 'text-red-500 bg-red-500/10' : 'text-muted-foreground hover:text-red-500 hover:bg-surface-hover'
+            }`}
           >
-            <Brain className="h-3 w-3 text-accent shrink-0" />
-            <span className="text-[10px] text-foreground/70 max-w-[120px] truncate font-mono">
-              {orchestratorModel.modelId}
-            </span>
-            {/* Dim indicators that coder + tester are configured but idle */}
-            {coder && <Code className="h-3 w-3 text-foreground/20 shrink-0" />}
-            {tester && <TestTube className="h-3 w-3 text-foreground/20 shrink-0" />}
-          </div>
-        )}
+            <Heart className={`h-4 w-4 ${aiIsStreaming ? 'animate-pulse text-red-500' : ''}`} />
+          </button>
+          {showHeartbeat && (
+            <AgentHeartbeatPopover
+              onOpenModelSettings={() => {
+                setShowHeartbeat(false);
+                setSettingsOpen(true);
+              }}
+            />
+          )}
+        </div>
 
         {/* Model count badge (mobile) */}
         <button

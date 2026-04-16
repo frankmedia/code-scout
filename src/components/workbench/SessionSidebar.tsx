@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react';
-import { Plus, MessageSquare, Trash2, Edit2, Check, X, ChevronLeft } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Edit2, Check, X, ChevronLeft, LogOut, Settings } from 'lucide-react';
 import { useChatHistoryStore, createWelcomeMessages, type SavedChat } from '@/store/chatHistoryStore';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { useProjectStore } from '@/store/projectStore';
+import { useAuthStore } from '@/store/authStore';
+import { useModelStore } from '@/store/modelStore';
 
 /** Stable fallback for Zustand selectors — a fresh [] each time breaks useSyncExternalStore. */
 const EMPTY_SAVED_CHATS: SavedChat[] = [];
@@ -197,6 +199,52 @@ const SessionSidebar = () => {
             );
           })
         )}
+      </div>
+
+      {/* User profile + logout — pinned to bottom */}
+      <UserFooter />
+    </div>
+  );
+};
+
+const UserFooter = () => {
+  const user = useAuthStore(s => s.user);
+  const logout = useAuthStore(s => s.logout);
+  const setSettingsOpen = useModelStore(s => s.setSettingsOpen);
+
+  if (!user) return null;
+
+  const initials = user.email
+    .split('@')[0]
+    .split(/[._-]/)
+    .slice(0, 2)
+    .map(s => s[0]?.toUpperCase() ?? '')
+    .join('');
+
+  return (
+    <div className="shrink-0 border-t border-border px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+          <span className="text-[10px] font-bold text-primary">{initials}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium text-foreground truncate">{user.email.split('@')[0]}</p>
+          <p className="text-[9px] text-muted-foreground truncate">{user.accountType || 'Free'}</p>
+        </div>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+          title="Settings"
+        >
+          <Settings className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={logout}
+          className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+          title="Log out"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </button>
       </div>
     </div>
   );

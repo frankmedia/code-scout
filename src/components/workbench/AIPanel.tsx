@@ -481,6 +481,7 @@ const ACTIVITY_ICONS: Record<string, string> = {
   'Indexed':    '📂',
   'Connecting': '🔌',
   'Sending':    '⬆',
+  'Waiting':    '⏳',
   'Receiving':  '📡',
   'Parsing':     '🔍',
   'Plan ready':  '✅',

@@ -472,6 +472,12 @@ export function generatePlan(options: GeneratePlanOptions): Promise<Plan> {
         }
       : undefined;
 
+    // Transition to "Waiting" after a brief delay — the model needs time
+    // to process the prompt before it starts streaming back tokens.
+    const waitingTimer = setTimeout(() => {
+      onStatus?.('Waiting for response…');
+    }, 1500);
+
     callModel(
       { messages, modelId, provider, endpoint: resolvedEndpoint, apiKey: resolvedApiKey, signal },
       // onChunk — stream progress
@@ -481,6 +487,7 @@ export function generatePlan(options: GeneratePlanOptions): Promise<Plan> {
         if (firstChunk) {
           firstChunk = false;
           firstChunkAt = Date.now();
+          clearTimeout(waitingTimer);
           onStatus?.('Receiving · first token');
         } else {
           const approxTokens = Math.ceil(charsReceived / 4);

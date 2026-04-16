@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff } from 'lucide-react';
+import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff, Undo2 } from 'lucide-react';
 import { useWorkbenchStore, AppMode, type ChatImagePart } from '@/store/workbenchStore';
 import { useModelStore, PROVIDER_OPTIONS, ModelProvider } from '@/store/modelStore';
 import { useChatHistoryStore } from '@/store/chatHistoryStore';
@@ -613,6 +613,8 @@ const AIPanel = () => {
     planTabOpen,
     openPlanTab,
     bumpChatSession,
+    fileHistory,
+    rollbackAll,
   } = store;
   const setAiStreamingStats = useWorkbenchStore(s => s.setAiStreamingStats);
   const addAiSessionTokens = useWorkbenchStore(s => s.addAiSessionTokens);
@@ -2130,6 +2132,23 @@ const AIPanel = () => {
           )}
 
           <div className="flex-1" />
+
+          {/* Rollback button — shown when agent has made file changes */}
+          {fileHistory.length > 0 && !isAgentBusy && (
+            <button
+              type="button"
+              onClick={() => {
+                rollbackAll();
+                addLog('All file changes rolled back', 'warning');
+                addMessage({ role: 'assistant', agent: 'coder', content: 'All file changes have been rolled back.' });
+              }}
+              title={`Undo ${fileHistory.length} file change${fileHistory.length !== 1 ? 's' : ''}`}
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 transition-colors text-[11px] font-medium shrink-0"
+            >
+              <Undo2 className="h-3 w-3" />
+              Rollback
+            </button>
+          )}
 
           {/* Context bar — right-aligned */}
           <ContextBar

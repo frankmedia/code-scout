@@ -73,6 +73,12 @@ interface ModelStoreState {
   discoveryEndpoints: Partial<Record<ModelProvider, string>>;
   /** API keys typed in Discover — kept even before any cloud model row exists */
   providerApiKeys: Partial<Record<ModelProvider, string>>;
+  /** Timeout (ms) for the orchestrator evaluation call after plan completion. Default 15000. */
+  orchestratorTimeoutMs: number;
+  setOrchestratorTimeout: (ms: number) => void;
+  /** Timeout (ms) for web search / fetch HTTP requests during plan execution. Default 30000. */
+  httpTimeoutMs: number;
+  setHttpTimeout: (ms: number) => void;
 
   addModel: (model: Omit<ModelConfig, 'id'>, makeDefault?: boolean) => void;
   removeModel: (id: string) => void;
@@ -138,6 +144,10 @@ export const useModelStore = create<ModelStoreState>()(
       selectedChatModel: null,
       discoveryEndpoints: {},
       providerApiKeys: {},
+      orchestratorTimeoutMs: 15_000,
+      setOrchestratorTimeout: (ms: number) => set({ orchestratorTimeoutMs: Math.max(5000, ms) }),
+      httpTimeoutMs: 30_000,
+      setHttpTimeout: (ms: number) => set({ httpTimeoutMs: Math.max(5000, ms) }),
 
       addModel: (model, makeDefault) => {
         const id = crypto.randomUUID();

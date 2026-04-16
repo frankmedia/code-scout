@@ -6,7 +6,7 @@ const SKIP_DIRS = new Set([
   '.git', 'node_modules', '.next', 'dist', 'build', '.cache',
   '__pycache__', '.turbo', 'coverage', '.nuxt', '.output', 'out',
 ]);
-const MAX_FILES = 500;
+const MAX_FILES = 5000;
 /** Match Tauri: allow deeper trees without returning an empty child list. */
 const MAX_DEPTH = 16;
 const MAX_FILE_SIZE = 2_000_000; // 2 MB

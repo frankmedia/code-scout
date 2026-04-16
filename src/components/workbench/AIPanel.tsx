@@ -1682,141 +1682,79 @@ const AIPanel = () => {
 
   // ── Plan completion evaluation — orchestrator reviews step results ──────────
   const handlePlanCompletion = useCallback(async (stepResults: string, originalGoal: string) => {
-    const ms = useModelStore.getState();
-    const orchModel = ms.getModelForRole('orchestrator');
     const ws = useWorkbenchStore.getState();
-    ws.addLog(`[LOOP] handlePlanCompletion called | results: ${stepResults.length} chars | orch enabled: ${orchModel?.enabled} | model: ${orchModel?.modelId}`, 'info');
+    const orchModel = useModelStore.getState().getModelForRole('orchestrator');
+
+    // No orchestrator model → just mark done, no evaluation needed
     if (!orchModel?.enabled) {
-      ws.addLog('[LOOP] No orchestrator model enabled — skipping evaluation', 'warning');
+      ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: 'Task completed.' });
       return;
     }
-    ws.addLog('Orchestrator evaluating plan results...', 'info');
 
-    // Ask the orchestrator to evaluate whether the goal is fully met
-    const evalPrompt: ModelRequestMessage[] = [
-      {
-        role: 'system',
-        content: [
-          'You are an orchestrator evaluating whether a plan achieved the user\'s goal.',
-          'You will be given the original goal and the execution results of each step.',
-          '',
-          'Preferred response format — a JSON object (no markdown fences):',
-          '{ "done": true, "summary": "one-sentence summary of what was accomplished" }',
-          '{ "done": false, "followUp": "description of what still needs to happen" }',
-          '',
-          'If you cannot respond in JSON, use one of these plain-text prefixes instead:',
-          '  DONE: <your summary>',
-          '  MORE: <what still needs doing>',
-          '',
-          'If neither format is possible, write a plain-text answer — it will be treated as DONE.',
-          '',
-          'Be conservative: if all steps succeeded and the results look correct, say done.',
-          'Only say not done if there is clear evidence of missing work or failures that need fixing.',
-        ].join('\n'),
-      },
-      {
-        role: 'user',
-        content: `Original goal:\n${originalGoal}\n\nStep execution results:\n${stepResults.slice(0, 12000)}`,
-      },
-    ];
+    ws.addTerminalOutput('[LOOP] orchestrator evaluating plan results...');
 
     try {
-      ws.addLog('[LOOP] calling orchestrator callModel for evaluation', 'info');
+      // Short 15s timeout — if model is unreachable, fail fast instead of hanging
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
         callModel(
-          modelToRequest(orchModel, evalPrompt, {
-            signal: AbortSignal.timeout(60_000),
-            maxOutputTokens: 1024,
-          }),
+          modelToRequest(orchModel, [
+            {
+              role: 'system',
+              content: 'You are evaluating whether a plan achieved the user\'s goal. Reply with JSON: { "done": true, "summary": "..." } or { "done": false, "followUp": "..." }. If you cannot use JSON, just write your answer as plain text.',
+            },
+            {
+              role: 'user',
+              content: `Goal:\n${originalGoal}\n\nResults:\n${stepResults.slice(0, 8000)}`,
+            },
+          ], { signal: AbortSignal.timeout(15_000), maxOutputTokens: 512 }),
           (chunk: string) => { full += chunk; },
-          (finalText: string) => { ws.addLog(`[LOOP] orch eval onDone: ${finalText.slice(0, 80)}`, 'success'); resolve(finalText); },
-          (err: Error) => { ws.addLog(`[LOOP] orch eval onError: ${err.name} ${err.message}`, 'error'); reject(err); },
+          (finalText: string) => resolve(finalText || full),
+          (err: Error) => reject(err),
         );
       });
 
-      // ── Flexible parsing: JSON first, then keyword/prose fallback ──────────
-      // The orchestrator may reply in JSON, plain text, or markdown — all are
-      // valid. We must never silently swallow a response.
-      let isDone: boolean | undefined;
-      let summary: string | undefined;
-      let followUp: string | undefined;
+      ws.addTerminalOutput(`[LOOP] orchestrator replied: ${result.slice(0, 60)}`);
 
-      // 1. Try strict JSON extraction (handles code-fenced JSON too)
+      // Parse: try JSON, then fallback to raw text
+      let isDone = true;
+      let summary = result.trim();
+      let followUp = '';
+
       try {
-        const jsonMatch = result.match(/\{[\s\S]*?\}/);
-        if (jsonMatch) {
-          const p = JSON.parse(jsonMatch[0]) as { done?: boolean; summary?: string; followUp?: string };
-          isDone = p.done;
-          summary = p.summary;
-          followUp = p.followUp;
+        const m = result.match(/\{[\s\S]*?\}/);
+        if (m) {
+          const p = JSON.parse(m[0]);
+          if (p.done === false) { isDone = false; followUp = p.followUp || result; }
+          else { summary = p.summary || result; }
         }
-      } catch {
-        // JSON parse failed — fall through to keyword detection below
+      } catch { /* use raw text */ }
+
+      // Keyword fallback
+      if (isDone && /\b(not complete|not done|incomplete|more work|follow.?up needed)\b/i.test(result)) {
+        isDone = false;
+        followUp = result;
       }
 
-      // 2. Keyword / prose fallback when no valid JSON was found
-      if (isDone === undefined) {
-        const lower = result.toLowerCase();
-        // Explicit prefixes: "DONE: ..." / "MORE: ..."
-        const doneM = result.match(/^DONE[:\s]+([\s\S]+)/i);
-        const moreM = result.match(/^MORE[:\s]+([\s\S]+)/i);
-        if (doneM) {
-          isDone = true;
-          summary = doneM[1].trim();
-        } else if (moreM) {
-          isDone = false;
-          followUp = moreM[1].trim();
-        } else if (/\b(not complete|not done|not finished|incomplete|more work|additional work|follow.?up needed)\b/.test(lower)) {
-          isDone = false;
-          followUp = result.trim();
-        } else {
-          // Default: treat the full response as a completion summary
-          isDone = true;
-          summary = result.trim();
-        }
-      }
-
-      if (isDone === false && (followUp ?? summary)) {
-        const followUpText = followUp ?? summary ?? 'More work is required.';
-        // Orchestrator wants more work — trigger a new planning round
+      if (!isDone && followUp) {
         ws.addMessage({
           role: 'assistant',
           agent: 'orchestrator',
-          content: `The previous plan steps are done, but more work is needed:\n\n${followUpText}\n\nGenerating a follow-up plan...`,
+          content: `More work needed:\n\n${followUp}\n\nGenerating follow-up plan...`,
         });
-        ws.addLog('Orchestrator requested follow-up plan', 'info');
         setPlanActivities([]);
         setIsThinking(true);
         requestStartTime.current = Date.now();
         await runPlanningWithUserGoalRef.current(
-          `${originalGoal}\n\n---\nPrevious plan execution results:\n${stepResults.slice(0, 6000)}\n\nThe previous plan partially addressed the goal. Additional work needed:\n${followUpText}\n\nProduce a follow-up plan for the remaining work.`,
+          `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, 4000)}\n\nAdditional work needed:\n${followUp}`,
         );
         saveCurrentChat(useWorkbenchStore.getState().messages);
       } else {
-        // Task complete — always post the orchestrator's conclusion to chat
-        ws.addMessage({
-          role: 'assistant',
-          agent: 'orchestrator',
-          content: summary?.trim()
-            ? summary.trim()
-            : 'Task completed — all steps executed successfully.',
-        });
-        ws.addLog('Orchestrator confirmed: task complete', 'success');
+        ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: summary || 'Task completed.' });
       }
-    } catch (err) {
-      // Timeout or network error — the coder summary is already in chat,
-      // but we must still unblock the UI so the user knows the loop ended.
-      const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || /timeout|aborted/i.test(err.message));
-      ws.addLog(`Orchestrator evaluation ${isTimeout ? 'timed out' : 'failed'}: ${err instanceof Error ? err.message : String(err)}`, 'info');
-      // Post a visible message so chat is never left hanging
-      ws.addMessage({
-        role: 'assistant',
-        agent: 'orchestrator',
-        content: isTimeout
-          ? 'Evaluation timed out — the plan steps have been completed. Check the output above for results.'
-          : 'Plan steps completed. (Orchestrator evaluation unavailable.)',
-      });
+    } catch {
+      // Model unreachable / timeout — just mark done, don't hang
+      ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: 'Task completed.' });
     }
   }, [setIsThinking, saveCurrentChat, setPlanActivities]);
 

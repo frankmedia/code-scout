@@ -26,7 +26,7 @@ import { useWorkbenchStore, type PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
 import { callModel, modelToRequest, type ModelRequestMessage } from '@/services/modelApi';
-import { submitPlanRevision } from '@/services/planRevisionBridge';
+import { submitPlanRevision, submitPlanCompletion } from '@/services/planRevisionBridge';
 import { planExecutionProgressSuffix } from '@/utils/planExecutionUi';
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
@@ -167,16 +167,18 @@ export function ChatPlanCard() {
             return `${head}All steps completed! Review the changes in the editor.`;
           };
 
+          // Recover the original user goal for orchestrator evaluation
+          const originalGoal = [...useWorkbenchStore.getState().messages]
+            .reverse()
+            .find(m => m.role === 'user')?.content ?? '';
+
           const coderM = getModelForRole('coder');
           /** Bounded wait so a stuck summary stream cannot leave the chat thread without a reply. */
           const SUMMARY_MS = 120_000;
           if (coderM?.enabled && stepResults.trim()) {
-            const originalQuestion = [...useWorkbenchStore.getState().messages]
-              .reverse()
-              .find(m => m.role === 'user')?.content ?? '';
             const summaryPrompt: ModelRequestMessage[] = [
               { role: 'system', content: 'You are a helpful coding assistant. The user asked a question and a plan was executed to answer it. Analyze the step results below and provide a clear, concise answer to the user\'s original question. Be direct and specific.' },
-              { role: 'user', content: `Original question: ${originalQuestion}\n\nPlan execution results:\n${stepResults}\n\nProvide a clear answer based on these results.` },
+              { role: 'user', content: `Original question: ${originalGoal}\n\nPlan execution results:\n${stepResults}\n\nProvide a clear answer based on these results.` },
             ];
             let summarySettled = false;
             const settle = (fn: () => void) => {
@@ -193,6 +195,9 @@ export function ChatPlanCard() {
               (fullText) => {
                 settle(() => {
                   addMessage({ role: 'assistant', agent: 'coder', content: fullText.trim() || buildCompletionFallback() });
+                  // After summary is posted, ask the orchestrator to evaluate results
+                  // and decide whether a follow-up plan is needed.
+                  void submitPlanCompletion(stepResults, originalGoal);
                 });
               },
               (err) => {
@@ -202,11 +207,15 @@ export function ChatPlanCard() {
                       ? `Summary timed out after ${SUMMARY_MS / 1000}s — here are the plan results.`
                       : `Summary could not run (${err.message.slice(0, 200)}) — here are the plan results.`;
                   addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback(why) });
+                  // Still let the orchestrator evaluate even if summary failed
+                  void submitPlanCompletion(stepResults, originalGoal);
                 });
               },
             );
           } else {
             addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback() });
+            // Trigger orchestrator evaluation for non-coder path too
+            void submitPlanCompletion(stepResults, originalGoal);
           }
         },
         onLog: (message, type) => addLog(message, type),

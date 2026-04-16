@@ -14,7 +14,7 @@ import { chatMessagesToApiMessages } from '@/services/chatApiMessages';
 import { ALL_CHAT_TOOLS, invocationsFromToolCalls, parseTextToolCalls } from '@/services/chatTools';
 import { generateMockPlan } from '@/services/planGenerator';
 import { orchestrator } from '@/services/orchestrator';
-import { registerPlanRevisionHandler } from '@/services/planRevisionBridge';
+import { registerPlanRevisionHandler, registerPlanCompletionHandler } from '@/services/planRevisionBridge';
 import { getWebResearchContext } from '@/services/agentExecutor';
 import { getOrIndexProject, getBudgetedSkeletonText, resolveEffectiveRoot } from '@/services/memoryManager';
 import { buildInstallContext } from '@/services/installTracker';
@@ -139,8 +139,100 @@ function ContextBar({
 }
 
 
-// ─── Compact model dropdown only ─────────────────────────────────────────────
+// ─── Compact role-based model dropdown ──────────────────────────────────────
 
+const RoleModelDropdown = ({
+  role,
+  label,
+}: {
+  role: 'orchestrator' | 'coder';
+  label: string;
+}) => {
+  const { models } = useModelStore();
+  const getModelForRole = useModelStore(s => s.getModelForRole);
+  const updateModel = useModelStore(s => s.updateModel);
+  const setDefault = useModelStore(s => s.setDefault);
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const enabledModels = models.filter(m => m.enabled);
+  const currentModel = getModelForRole(role);
+  const displayName = currentModel
+    ? currentModel.modelId.length > 18
+      ? currentModel.modelId.slice(0, 16) + '...'
+      : currentModel.modelId
+    : 'not set';
+
+  return (
+    <div className="relative shrink-0" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 rounded-md bg-secondary border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        title={currentModel ? `${label}: ${currentModel.name} (${currentModel.modelId})` : `${label}: not configured`}
+      >
+        <span className="text-[9px] font-semibold uppercase tracking-wider opacity-60">{label}</span>
+        <span className="font-mono truncate max-w-[100px]">{displayName}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 w-[320px] bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+          <div className="px-3 py-2 border-b border-border">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+              Select {label} Model
+            </p>
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {enabledModels.map(m => {
+              const provider = PROVIDER_OPTIONS.find(p => p.id === m.provider);
+              const isActive = m.id === currentModel?.id;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    // Set this model's role and make it the default for this role
+                    updateModel(m.id, { role });
+                    setDefault(m.id, role);
+                    setOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-surface-hover transition-colors ${
+                    isActive ? 'bg-primary/10 text-primary' : 'text-foreground'
+                  }`}
+                >
+                  {provider
+                    ? <ProviderIcon isLocal={provider.isLocal} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    : <span className="text-sm">.</span>
+                  }
+                  <div className="flex-1 text-left min-w-0">
+                    <span className="font-medium truncate text-[12px]">{m.name}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono ml-1">{m.modelId}</span>
+                  </div>
+                  {isActive && <span className="text-primary shrink-0 text-[10px]">active</span>}
+                </button>
+              );
+            })}
+            {enabledModels.length === 0 && (
+              <p className="px-3 py-2 text-[12px] text-muted-foreground">No models enabled. Configure in Settings.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Keep the old ModelDropdown for backward compat — it will no longer be rendered in the toolbar.
 const ModelDropdown = () => {
   const { models, selectedChatModel, setSelectedChatModel } = useModelStore();
   const getModelForRole = useModelStore(s => s.getModelForRole);
@@ -1588,6 +1680,91 @@ const AIPanel = () => {
     return () => registerPlanRevisionHandler(null);
   }, [handlePlanRevision]);
 
+  // ── Plan completion evaluation — orchestrator reviews step results ──────────
+  const handlePlanCompletion = useCallback(async (stepResults: string, originalGoal: string) => {
+    const ms = useModelStore.getState();
+    const orchModel = ms.getModelForRole('orchestrator');
+    if (!orchModel?.enabled) return; // No orchestrator — nothing to evaluate
+
+    const ws = useWorkbenchStore.getState();
+    ws.addLog('Orchestrator evaluating plan results...', 'info');
+
+    // Ask the orchestrator to evaluate whether the goal is fully met
+    const evalPrompt: ModelRequestMessage[] = [
+      {
+        role: 'system',
+        content: [
+          'You are an orchestrator evaluating whether a plan achieved the user\'s goal.',
+          'You will be given the original goal and the execution results of each step.',
+          '',
+          'Respond with a JSON object (no markdown fences):',
+          '{ "done": true, "summary": "..." }  — if the goal is fully achieved',
+          '{ "done": false, "followUp": "..." } — if more work is needed. The followUp field should',
+          '  describe what still needs to happen so a new plan can be generated.',
+          '',
+          'Be conservative: if all steps succeeded and the results look correct, say done.',
+          'Only say not done if there is clear evidence of missing work or failures that need fixing.',
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: `Original goal:\n${originalGoal}\n\nStep execution results:\n${stepResults.slice(0, 12000)}`,
+      },
+    ];
+
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        let full = '';
+        callModel(
+          modelToRequest(orchModel, evalPrompt, {
+            signal: AbortSignal.timeout(60_000),
+            maxOutputTokens: 1024,
+          }),
+          (chunk: string) => { full += chunk; },
+          (finalText: string) => resolve(finalText),
+          (err: Error) => reject(err),
+        );
+      });
+
+      // Parse the orchestrator's evaluation
+      let parsed: { done?: boolean; followUp?: string; summary?: string } = {};
+      try {
+        const jsonMatch = result.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        ws.addLog('Orchestrator evaluation: could not parse response, assuming done', 'info');
+        return;
+      }
+
+      if (parsed.done === false && parsed.followUp) {
+        // Orchestrator wants more work — trigger a new planning round
+        ws.addMessage({
+          role: 'assistant',
+          agent: 'orchestrator',
+          content: `The previous plan steps are done, but more work is needed:\n\n${parsed.followUp}\n\nGenerating a follow-up plan...`,
+        });
+        ws.addLog('Orchestrator requested follow-up plan', 'info');
+        setPlanActivities([]);
+        setIsThinking(true);
+        requestStartTime.current = Date.now();
+        await runPlanningWithUserGoalRef.current(
+          `${originalGoal}\n\n---\nPrevious plan execution results:\n${stepResults.slice(0, 6000)}\n\nThe previous plan partially addressed the goal. Additional work needed:\n${parsed.followUp}\n\nProduce a follow-up plan for the remaining work.`,
+        );
+        saveCurrentChat(useWorkbenchStore.getState().messages);
+      } else {
+        ws.addLog('Orchestrator confirmed: task complete', 'success');
+      }
+    } catch (err) {
+      // Non-fatal — the summary from ChatPlanCard already posted
+      ws.addLog(`Orchestrator evaluation skipped: ${err instanceof Error ? err.message : String(err)}`, 'info');
+    }
+  }, [setIsThinking, saveCurrentChat, setPlanActivities]);
+
+  useEffect(() => {
+    registerPlanCompletionHandler(handlePlanCompletion);
+    return () => registerPlanCompletionHandler(null);
+  }, [handlePlanCompletion]);
+
   const resolveChatModel = useCallback((chatRole: 'orchestrator' | 'coder') => {
     const ms = useModelStore.getState();
     // getSelectedChatModel() already returns the full ModelConfig object (or undefined)
@@ -2072,10 +2249,8 @@ const AIPanel = () => {
       </div>
 
       <div className="pt-2 pb-3 border-t border-border space-y-2 shrink-0">
-        {/* ── Two model boxes: Orchestrator + Coder ── */}
-        <AgentModelBoxes isThinking={isThinking} mode={mode} />
 
-        {/* ── Toolbar row: mode toggle · model · stop · context bar ── */}
+        {/* ── Toolbar row: mode toggle · model dropdowns · stop · context bar ── */}
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex items-center bg-secondary rounded-lg p-1 shrink-0">
             {modeOptions.map(m => (
@@ -2093,7 +2268,10 @@ const AIPanel = () => {
             ))}
           </div>
 
-          <ModelDropdown />
+          <RoleModelDropdown role="orchestrator" label="Orch" />
+          {(mode === 'agent' || mode === 'build') && (
+            <RoleModelDropdown role="coder" label="Coder" />
+          )}
 
           {/* Stop button — shown only while agent is busy */}
           {isAgentBusy && (

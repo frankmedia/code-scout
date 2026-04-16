@@ -247,12 +247,12 @@ const Index = () => {
           className="border-l border-border overflow-hidden"
         >
           <div className="h-full flex flex-col overflow-hidden">
-            {/* Token Power Grid — fixed height at top of right panel */}
-            <div className="shrink-0" style={{ height: '260px' }}>
+            {/* Token Power Grid — collapsible, auto height */}
+            <div className="shrink-0">
               <TokenPowerGrid />
             </div>
             {/* File tree — takes remaining space */}
-            <div className="flex-1 min-h-0 overflow-hidden border-t border-border">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <FileTree />
             </div>
           </div>

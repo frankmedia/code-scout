@@ -134,10 +134,8 @@ jobs:
             exit 1
           fi
           echo "APPLE_TEAM_ID=$team_id" >> "$GITHUB_ENV"
-          # Prefer Apple ID auth when present; only use API key fallback otherwise.
-          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ]; then
-            :
-          elif [ -n "$api_key" ] && [ -n "$api_issuer" ] && [ -n "$api_private_key" ]; then
+          # Prefer App Store Connect API key auth for CI stability.
+          if [ -n "$api_key" ] && [ -n "$api_issuer" ] && [ -n "$api_private_key" ]; then
             if ! printf '%s' "$api_issuer" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
               echo "APPLE_API_ISSUER is not a valid UUID after normalization: [$api_issuer]"
               exit 1
@@ -148,6 +146,9 @@ jobs:
             echo "APPLE_API_KEY_PATH=$key_file" >> "$GITHUB_ENV"
             echo "APPLE_API_KEY=$api_key" >> "$GITHUB_ENV"
             echo "APPLE_API_ISSUER=$api_issuer" >> "$GITHUB_ENV"
+          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ]; then
+            echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
           fi
 
       - name: Build Tauri app (macOS, notarized)
@@ -156,8 +157,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_ID: ${{ env.APPLE_ID }}
+          APPLE_PASSWORD: ${{ env.APPLE_PASSWORD }}
           APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}

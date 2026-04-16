@@ -176,6 +176,25 @@ jobs:
             -s -k actions build.keychain
           rm certificate.p12
 
+      - name: Verify Developer ID Application certificate
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${APPLE_SIGNING_IDENTITY:-}" | grep -q '^Developer ID Application:'; then
+            echo "APPLE_SIGNING_IDENTITY must start with 'Developer ID Application:'"
+            exit 1
+          fi
+          identities="$(security find-identity -v -p codesigning build.keychain || true)"
+          echo "$identities"
+          if ! printf '%s' "$identities" | grep -q "Developer ID Application"; then
+            echo "Imported certificate is not a Developer ID Application cert."
+            echo "Export and upload the correct Developer ID Application .p12 to APPLE_CERTIFICATE."
+            exit 1
+          fi
+
       - name: Export macOS signing env for Tauri
         shell: bash
         env:

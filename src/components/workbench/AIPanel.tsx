@@ -1682,8 +1682,10 @@ const AIPanel = () => {
 
   // ── Plan completion evaluation — orchestrator reviews step results ──────────
   const handlePlanCompletion = useCallback(async (stepResults: string, originalGoal: string) => {
+    console.log('[LOOP-DEBUG] handlePlanCompletion called | stepResults length:', stepResults.length, '| goal length:', originalGoal.length);
     const ms = useModelStore.getState();
     const orchModel = ms.getModelForRole('orchestrator');
+    console.log('[LOOP-DEBUG] orchestrator model enabled:', orchModel?.enabled, '| modelId:', orchModel?.modelId);
     if (!orchModel?.enabled) return; // No orchestrator — nothing to evaluate
 
     const ws = useWorkbenchStore.getState();
@@ -1718,6 +1720,7 @@ const AIPanel = () => {
     ];
 
     try {
+      console.log('[LOOP-DEBUG] calling orchestrator callModel for evaluation');
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
         callModel(
@@ -1726,8 +1729,8 @@ const AIPanel = () => {
             maxOutputTokens: 1024,
           }),
           (chunk: string) => { full += chunk; },
-          (finalText: string) => resolve(finalText),
-          (err: Error) => reject(err),
+          (finalText: string) => { console.log('[LOOP-DEBUG] orchestrator eval onDone, length:', finalText.length, '| preview:', finalText.slice(0, 100)); resolve(finalText); },
+          (err: Error) => { console.log('[LOOP-DEBUG] orchestrator eval onError:', err.name, err.message); reject(err); },
         );
       });
 

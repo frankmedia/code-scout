@@ -47,7 +47,17 @@
       "Read(//tmp/**)",
       "Bash(curl -s -o /tmp/ddg_lite.html -w \"%{http_code}\" -A \"CodeScout/1.0 \\(Desktop App\\)\" \"https://lite.duckduckgo.com/lite/?q=top+3+free+LLM+models+on+OpenRouter\")",
       "Bash(curl -s \"https://api.duckduckgo.com/?q=top+3+free+LLM+models+on+OpenRouter&format=json&no_html=1&skip_disambig=1\")",
-      "WebFetch(domain:openrouter.ai)"
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(git -C /Users/frank/code-scout ls-files src-tauri/icons/)",
+      "Bash(git -C /Users/frank/code-scout ls-files Cargo.lock)",
+      "Bash(git -C /Users/frank/code-scout ls-files)",
+      "Bash(git -C /Users/frank/code-scout ls-files public/logo.svg)",
+      "Bash(git -C /Users/frank/code-scout status --short)",
+      "Bash(git -C /Users/frank/code-scout log --oneline -3)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)"
     ]
   }
 }

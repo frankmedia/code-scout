@@ -691,6 +691,8 @@ const AIPanel = () => {
     openPlanTab,
     bumpChatSession,
   } = store;
+  const setAiStreamingStats = useWorkbenchStore(s => s.setAiStreamingStats);
+  const addAiSessionTokens = useWorkbenchStore(s => s.addAiSessionTokens);
   const getModelForRole = useModelStore(s => s.getModelForRole);
   const getSelectedChatModel = useModelStore(s => s.getSelectedChatModel);
   const updateModel = useModelStore(s => s.updateModel);
@@ -899,11 +901,15 @@ const AIPanel = () => {
     const inn = usage.inputTokens ?? 0;
     const out = usage.outputTokens ?? 0;
     if (inn <= 0 && out <= 0) return;
-    setLiveTurnTokens(prev => ({
-      in: Math.max(prev.in, inn),
-      out: Math.max(prev.out, out),
-    }));
-  }, []);
+    setLiveTurnTokens(prev => {
+      const newIn = Math.max(prev.in, inn);
+      const newOut = Math.max(prev.out, out);
+      // If output grew, add the delta to session total
+      const outDelta = newOut - prev.out;
+      if (outDelta > 0) addAiSessionTokens(outDelta);
+      return { in: newIn, out: newOut };
+    });
+  }, [addAiSessionTokens]);
 
   /** Called on every streamed chunk to update the live tok/s counter. */
   const trackStreamChunk = useCallback((chunk: string) => {
@@ -916,9 +922,11 @@ const AIPanel = () => {
     const elapsedSec = (now - streamFirstChunkAtRef.current) / 1000;
     if (elapsedSec > 0.5) {
       const approxTokens = streamCharsReceivedRef.current / 4;
-      setLiveTokPerSec(Math.round(approxTokens / elapsedSec));
+      const rate = Math.round(approxTokens / elapsedSec);
+      setLiveTokPerSec(rate);
+      setAiStreamingStats({ liveTokPerSec: rate });
     }
-  }, []);
+  }, [setAiStreamingStats]);
 
   useEffect(() => {
     setIsThinking(false);
@@ -943,9 +951,13 @@ const AIPanel = () => {
       setLiveTokPerSec(null);
       streamFirstChunkAtRef.current = 0;
       streamCharsReceivedRef.current = 0;
+      // Record session start time on first turn
+      setAiStreamingStats({ isStreaming: true, liveTokPerSec: null });
+    } else if (!isThinking && prevIsThinkingRef.current) {
+      setAiStreamingStats({ isStreaming: false, liveTokPerSec: null });
     }
     prevIsThinkingRef.current = isThinking;
-  }, [isThinking]);
+  }, [isThinking, setAiStreamingStats]);
 
   // Live elapsed-time counter while thinking
   useEffect(() => {
@@ -1056,6 +1068,24 @@ const AIPanel = () => {
       ),
     [messages, systemPromptForEstimate, input, isThinking, streamingContent],
   );
+
+  // Keep the streaming stats store in sync with context usage
+  useEffect(() => {
+    setAiStreamingStats({ contextUsed: estimatedContext, contextLimit });
+  }, [estimatedContext, contextLimit, setAiStreamingStats]);
+
+  // Record session start time when the first user message is sent
+  useEffect(() => {
+    const firstUserMsg = messages.find(m => m.role === 'user');
+    if (firstUserMsg) {
+      // Touch session start (addAiSessionTokens initialises it on first call)
+      // We only set start time here so just poke with 0
+      useWorkbenchStore.setState(s => ({
+        aiSessionStartTime: s.aiSessionStartTime ?? firstUserMsg.timestamp,
+      }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
 
   const showImageAttach =
     !!estimateModel && effectiveSupportsVision(estimateModel) && visionAllowedForProvider(estimateModel.provider);

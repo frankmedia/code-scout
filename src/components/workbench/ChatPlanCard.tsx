@@ -25,7 +25,6 @@ import {
 import { useWorkbenchStore, type PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
-// callModel removed — onComplete now posts results directly without model calls
 import { submitPlanRevision, submitPlanCompletion } from '@/services/planRevisionBridge';
 import { planExecutionProgressSuffix } from '@/utils/planExecutionUi';
 
@@ -168,7 +167,6 @@ export function ChatPlanCard() {
           const originalGoal = [...useWorkbenchStore.getState().messages]
             .reverse()
             .find(m => m.role === 'user')?.content ?? '';
-          addTerminalOutput('[LOOP] plan complete → submitPlanCompletion');
           void submitPlanCompletion(stepResults, originalGoal);
         },
         onLog: (message, type) => addLog(message, type),

@@ -319,6 +319,8 @@ export const useModelStore = create<ModelStoreState>()(
         selectedChatModel: state.selectedChatModel,
         discoveryEndpoints: state.discoveryEndpoints,
         providerApiKeys: state.providerApiKeys,
+        orchestratorTimeoutMs: state.orchestratorTimeoutMs,
+        httpTimeoutMs: state.httpTimeoutMs,
       }),
     }
   )

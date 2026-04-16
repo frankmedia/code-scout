@@ -256,16 +256,10 @@ class Orchestrator {
         callbacks.onStepError?.(step, idx, error);
       },
       onAllDone: () => {
-        useWorkbenchStore.getState().addMessage({ role: 'assistant', agent: 'orchestrator', content: '🟢 DEBUG: onAllDone fired' });
         taskStore.clearRepairContext();
         this.transition('COMPLETED');
         taskStore.addEvent('task_completed', 'All steps completed successfully');
-        try {
-          callbacks.onComplete?.();
-          useWorkbenchStore.getState().addMessage({ role: 'assistant', agent: 'orchestrator', content: '🟢 DEBUG: onComplete returned OK' });
-        } catch (e) {
-          useWorkbenchStore.getState().addMessage({ role: 'assistant', agent: 'orchestrator', content: `🔴 DEBUG: onComplete THREW: ${e instanceof Error ? e.message : String(e)}` });
-        }
+        callbacks.onComplete?.();
       },
       onPlanStoppedEarly: (reason) => {
         taskStore.clearRepairContext();

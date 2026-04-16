@@ -204,6 +204,7 @@ jobs:
           api_issuer_raw="$(printf '%s' "${APPLE_API_ISSUER:-}" | tr -d '\r\n' | xargs)"
           api_issuer_hex="$(printf '%s' "$api_issuer_raw" | tr -cd '0-9a-fA-F')"
           api_issuer="$api_issuer_raw"
+          team_id="$(printf '%s' "${APPLE_TEAM_ID:-}" | tr -d '\r\n' | xargs)"
           if [ "${#api_issuer_hex}" -eq 32 ]; then
             api_issuer="$(printf '%s-%s-%s-%s-%s' \
               "${api_issuer_hex:0:8}" \
@@ -214,7 +215,11 @@ jobs:
           fi
           api_private_key="$(printf '%s' "${APPLE_API_PRIVATE_KEY:-}" | sed 's/\r$//')"
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+          if [ "${#team_id}" -lt 3 ]; then
+            echo "APPLE_TEAM_ID is invalid after normalization (length < 3)."
+            exit 1
+          fi
+          echo "APPLE_TEAM_ID=$team_id" >> "$GITHUB_ENV"
           if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ]; then
             echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
             echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"

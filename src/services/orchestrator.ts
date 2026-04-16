@@ -256,6 +256,7 @@ class Orchestrator {
         callbacks.onStepError?.(step, idx, error);
       },
       onAllDone: () => {
+        console.log('[LOOP-DEBUG] orchestrator onAllDone fired — calling callbacks.onComplete');
         taskStore.clearRepairContext();
         this.transition('COMPLETED');
         taskStore.addEvent('task_completed', 'All steps completed successfully');

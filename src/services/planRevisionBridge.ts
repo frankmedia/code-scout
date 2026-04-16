@@ -38,6 +38,7 @@ export function registerPlanCompletionHandler(fn: PlanCompletionHandler | null):
 
 export async function submitPlanCompletion(stepResults: string, originalGoal: string): Promise<void> {
   const fn = completionHandler;
+  console.log('[LOOP-DEBUG] submitPlanCompletion called | handler registered:', !!fn);
   if (!fn) {
     console.warn('[planCompletion] No handler registered (AIPanel not mounted?)');
     return;

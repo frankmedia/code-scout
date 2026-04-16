@@ -72,7 +72,7 @@ import type { ProjectIdentity } from './planGenerator';
 // These symbols were previously exported from this file. Consumers still
 // import them from '@/services/agentExecutor', so we re-export here.
 
-export { ExecutionCallbacks } from './agentExecutorContext';
+export type { ExecutionCallbacks } from './agentExecutorContext';
 export { getWebResearchContext } from './agentExecutorContext';
 export { resolveFilePath, isBackgroundCommand, normalizeCommandPaths } from './pathResolution';
 export { detectDevServerPort, freePortIfOccupied, BACKGROUND_SETTLE_MS_EXPORT } from './agentExecutorPort';

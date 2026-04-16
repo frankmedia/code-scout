@@ -57,7 +57,30 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(ls /Users/frank/code-scout/src/services/orchestrat*)",
+      "Bash(git -C /Users/frank/code-scout worktree list)",
+      "Bash(git -C /Users/frank/code-scout branch -a)",
+      "Bash(git -C /Users/frank/code-scout log --oneline -5)",
+      "Bash(git -C /Users/frank/code-scout diff --stat HEAD)",
+      "Bash(git -C /Users/frank/code-scout diff HEAD src/services/agentToolLoop.ts)",
+      "Bash(git -C /Users/frank/code-scout diff HEAD src/components/workbench/AIPanel.tsx)",
+      "Bash(git -C /Users/frank/code-scout commit -m 'fix\\(agent\\): wire runAgentToolLoop into AIPanel — Orchestrator now continues after Coder returns:*)",
+      "Bash(git -C /Users/frank/code-scout push origin main)",
+      "Bash(rm -rf \"/Applications/Code Scout.app\")",
+      "Bash(cp -R \"/Users/frank/code-scout/src-tauri/target/release/bundle/macos/Code Scout.app\" /Applications/)",
+      "Bash(xattr -cr \"/Applications/Code Scout.app\")",
+      "Bash(node -e \"const l = require\\('lucide-react'\\); console.log\\('PanelRightClose:', !!l.PanelRightClose, 'PanelRightOpen:', !!l.PanelRightOpen\\);\")",
+      "Bash(git merge:*)",
+      "Bash(git worktree:*)",
+      "Bash(git -C /Users/frank/code-scout/.claude/worktrees/agent-a0ff078e log --oneline -5)",
+      "Bash(git -C /Users/frank/code-scout diff --stat HEAD src/pages/Index.tsx src/components/workbench/AIPanel.tsx)",
+      "Bash(git -C /Users/frank/code-scout/.claude/worktrees/agent-afe833d0 diff main --stat)",
+      "Bash(git -C /Users/frank/code-scout diff HEAD --stat)",
+      "Bash(grep -v \"^$\")",
+      "Bash(git -C /Users/frank/code-scout add src/components/workbench/ChatPlanCard.tsx src/components/workbench/PlanTabPanel.tsx src/services/agentExecutor.ts src/services/agentExecutorSteps.ts src/services/agentExecutorUtils.ts src/services/validationRunner.ts vite.config.ts src/services/agentExecutor.rmSanitize.test.ts)",
+      "Bash(git -C /Users/frank/code-scout commit -m \"feat: agent executor improvements, plan card updates, validation runner\")",
+      "Bash(xargs kill:*)"
     ]
   }
 }

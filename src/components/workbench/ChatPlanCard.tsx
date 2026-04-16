@@ -25,7 +25,7 @@ import {
 import { useWorkbenchStore, type PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
-import { callModel, modelToRequest, type ModelRequestMessage } from '@/services/modelApi';
+// callModel removed — onComplete now posts results directly without model calls
 import { submitPlanRevision, submitPlanCompletion } from '@/services/planRevisionBridge';
 import { planExecutionProgressSuffix } from '@/utils/planExecutionUi';
 
@@ -137,15 +137,13 @@ export function ChatPlanCard() {
           });
         },
         onComplete: () => {
-          addLog('[LOOP] onComplete fired — plan execution done', 'success');
           updatePlanStatus('done');
           const planState = useWorkbenchStore.getState().currentPlan;
           const failed = planState?.steps.filter(s => s.status === 'error').length ?? 0;
           const serverSteps = planState?.steps.filter(s => s.serverUrl) ?? [];
           const urlList = serverSteps.map(s => `**${s.serverUrl}**`).join(' · ');
 
-          // Gather step outputs — always surfaced to chat so research-style plans
-          // (grep, etc.) still answer the user even if the summarizer model hangs.
+          // Build step results — always posted immediately, no model call needed
           const stepResults = (planState?.steps ?? []).map((s, i) => {
             let result = `Step ${i + 1}: ${s.description} — ${s.status}`;
             if (s.fullOutput?.trim()) result += `\nOutput:\n${s.fullOutput.trim().slice(0, 2000)}`;
@@ -153,75 +151,25 @@ export function ChatPlanCard() {
             return result;
           }).join('\n\n');
 
-          const excerpt = stepResults.trim().slice(0, 8000);
-          const buildCompletionFallback = (preamble?: string): string => {
-            const head = preamble ? `${preamble}\n\n` : '';
-            if (failed > 0) {
-              return `${head}Finished with **${failed} failed step(s)**. Check Terminal / Logs for details.\n\n${excerpt}`;
-            }
-            if (urlList) {
-              return `${head}All steps completed! App running at ${urlList}.${excerpt ? `\n\n---\n**Step output:**\n\n${excerpt}` : ''}`;
-            }
-            if (excerpt) {
-              return `${head}All steps completed.\n\n---\n**Step output:**\n\n${excerpt}`;
-            }
-            return `${head}All steps completed! Review the changes in the editor.`;
-          };
+          // Post to chat IMMEDIATELY — never wait for any model call
+          let completionMsg: string;
+          if (failed > 0) {
+            completionMsg = `Finished with **${failed} failed step(s)**.\n\n${stepResults.slice(0, 4000)}`;
+          } else if (urlList) {
+            completionMsg = `All steps completed! App running at ${urlList}.${stepResults ? `\n\n---\n${stepResults.slice(0, 4000)}` : ''}`;
+          } else if (stepResults.trim()) {
+            completionMsg = `All steps completed.\n\n---\n${stepResults.slice(0, 4000)}`;
+          } else {
+            completionMsg = 'All steps completed!';
+          }
+          addMessage({ role: 'assistant', agent: 'coder', content: completionMsg });
 
-          // Recover the original user goal for orchestrator evaluation
+          // Fire orchestrator evaluation — completely non-blocking
           const originalGoal = [...useWorkbenchStore.getState().messages]
             .reverse()
             .find(m => m.role === 'user')?.content ?? '';
-
-          const coderM = getModelForRole('coder');
-          addLog(`[LOOP] coderM enabled: ${coderM?.enabled} | stepResults: ${stepResults.trim().length} chars`, 'info');
-          /** Bounded wait so a stuck summary stream cannot leave the chat thread without a reply. */
-          const SUMMARY_MS = 120_000;
-          if (coderM?.enabled && stepResults.trim()) {
-            const summaryPrompt: ModelRequestMessage[] = [
-              { role: 'system', content: 'You are a helpful coding assistant. The user asked a question and a plan was executed to answer it. Analyze the step results below and provide a clear, concise answer to the user\'s original question. Be direct and specific.' },
-              { role: 'user', content: `Original question: ${originalGoal}\n\nPlan execution results:\n${stepResults}\n\nProvide a clear answer based on these results.` },
-            ];
-            let summarySettled = false;
-            const settle = (fn: () => void) => {
-              if (summarySettled) return;
-              summarySettled = true;
-              fn();
-            };
-            addLog('[LOOP] calling callModel for coder summary', 'info');
-            callModel(
-              modelToRequest(coderM, summaryPrompt, {
-                signal: AbortSignal.timeout(SUMMARY_MS),
-                maxOutputTokens: 4096,
-              }),
-              () => {},
-              (fullText) => {
-                addLog(`[LOOP] coder summary onDone — ${fullText.length} chars`, 'success');
-                settle(() => {
-                  addMessage({ role: 'assistant', agent: 'coder', content: fullText.trim() || buildCompletionFallback() });
-                  addLog('[LOOP] calling submitPlanCompletion (after summary)', 'info');
-                  void submitPlanCompletion(stepResults, originalGoal);
-                });
-              },
-              (err) => {
-                addLog(`[LOOP] coder summary onError: ${err.name} ${err.message}`, 'error');
-                settle(() => {
-                  const why =
-                    err.name === 'TimeoutError' || /aborted|timeout/i.test(err.message)
-                      ? `Summary timed out after ${SUMMARY_MS / 1000}s — here are the plan results.`
-                      : `Summary could not run (${err.message.slice(0, 200)}) — here are the plan results.`;
-                  addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback(why) });
-                  addLog('[LOOP] calling submitPlanCompletion (after summary error)', 'info');
-                  void submitPlanCompletion(stepResults, originalGoal);
-                });
-              },
-            );
-          } else {
-            addLog('[LOOP] no coder model — calling submitPlanCompletion directly', 'info');
-            addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback() });
-            // Trigger orchestrator evaluation for non-coder path too
-            void submitPlanCompletion(stepResults, originalGoal);
-          }
+          addTerminalOutput('[LOOP] plan complete → submitPlanCompletion');
+          void submitPlanCompletion(stepResults, originalGoal);
         },
         onLog: (message, type) => addLog(message, type),
       },

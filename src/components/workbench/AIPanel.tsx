@@ -26,9 +26,11 @@ import {
   estimateThreadTokens,
   contextLimitForModel,
   getChatSystemPrompt,
+  getAgentSystemPrompt,
   roughTokensFromRequestMessages,
   roughTokensFromText,
 } from '@/utils/tokenEstimate';
+import { runAgentToolLoop } from '@/services/agentToolLoop';
 import { isTauri } from '@/lib/tauri';
 import { effectiveSupportsVision } from '@/config/modelVisionHeuristics';
 // modelContextFetcher is called via the store's refreshModelStats action
@@ -1124,7 +1126,16 @@ const AIPanel = () => {
     requestStartTime.current = Date.now();
 
     if (prep.flow === 'chat_orchestrator') {
-      await handleChatResponse(prep.userMsg, 'orchestrator');
+      // Use the multi-round agent tool loop when both orchestrator and coder models
+      // are configured and a project path is open; otherwise fall back to single-shot chat.
+      const ms = useModelStore.getState();
+      const hasCoderModel = !!(ms.getModelForRole('coder')?.enabled);
+      const hasProjectPath = !!useWorkbenchStore.getState().projectPath;
+      if (hasCoderModel && hasProjectPath && isTauri()) {
+        await handleAgentToolLoop(prep.userMsg);
+      } else {
+        await handleChatResponse(prep.userMsg, 'orchestrator');
+      }
     } else if (prep.flow === 'chat_coder') {
       await handleChatResponse(prep.userMsg, 'coder');
     } else {
@@ -1287,6 +1298,133 @@ const AIPanel = () => {
 
   const handlePlanGeneration = async (userMsg: string) => {
     await runPlanningWithUserGoalRef.current(userMsg);
+  };
+
+  /**
+   * Run the Orchestrator/Coder multi-round agent tool loop.
+   * Called when chat mode is active AND both an orchestrator model and a coder
+   * model are configured. Replaces the single-shot `handleChatResponse` path so
+   * that the Coder's result is fed back into the Orchestrator's conversation and
+   * rounds continue until `finish_task` is called.
+   */
+  const handleAgentToolLoop = async (userMsg: string) => {
+    const ms = useModelStore.getState();
+    const orchestratorModel = ms.getModelForRole('orchestrator');
+    const coderModel = ms.getModelForRole('coder');
+    if (!orchestratorModel?.enabled) {
+      await handleChatResponse(userMsg, 'orchestrator');
+      return;
+    }
+
+    const state = useWorkbenchStore.getState();
+    const projectPath = state.projectPath;
+    if (!projectPath) {
+      // No project open — fall back to single-shot chat
+      await handleChatResponse(userMsg, 'orchestrator');
+      return;
+    }
+
+    // Build system prompt
+    const withCoder = !!(coderModel?.enabled);
+    const systemPrompt = getAgentSystemPrompt({ withCoder });
+
+    // Build context blocks (same as handleChatResponse)
+    const contextWindow = contextLimitForModel(orchestratorModel);
+    const projectMemory = useProjectMemoryStore.getState().getMemory(state.projectName);
+    const skillMd = projectMemory?.skillMd ?? '';
+    const skeletonBudget = contextWindow <= 32_000
+      ? Math.min(Math.floor(contextWindow * 0.20), 4000)
+      : Math.min(Math.floor(contextWindow * 0.10), 6000);
+    const skeletonText = state.files.length
+      ? getBudgetedSkeletonText(state.files, state.projectName, skeletonBudget)
+      : '';
+    const memoryPrompt = useAgentMemoryStore.getState().buildMemoryPrompt(state.projectName);
+    const envBlock = state.envInfo ? formatEnvForPrompt(state.envInfo) : '';
+    let installHistoryBlock = '';
+    if (isTauri() && projectPath) {
+      try {
+        const root = resolveEffectiveRoot(projectPath, state.files);
+        installHistoryBlock = await buildInstallContext(root) ?? '';
+      } catch { /* non-fatal */ }
+    }
+    const fullSystem = [
+      systemPrompt,
+      skillMd ? `\n## Project Info\n${skillMd}` : '',
+      skeletonText ? `\n## Project Structure\n${skeletonText}` : '',
+      envBlock ? `\n${envBlock}` : '',
+      installHistoryBlock ? `\n## Install History\n${installHistoryBlock}` : '',
+      memoryPrompt,
+    ].filter(Boolean).join('\n\n');
+
+    // Convert existing chat history to API messages (without system, which goes in opts)
+    const recent = state.messages.slice(-80);
+    const rawApiMessages = chatMessagesToApiMessages(recent);
+    const fullSystemTokens = roughTokensFromText(fullSystem);
+    const compressedMessages = compressMessages(rawApiMessages, {
+      contextWindowTokens: contextWindow,
+      systemPromptTokens: fullSystemTokens,
+      skeletonTokens: 0,
+    });
+
+    // The last message is the user's current message — use the rest as history
+    // (the user message was already added to the store before handleSend calls us)
+    const initialMessages: ModelRequestMessage[] = compressedMessages;
+
+    const streamAbort = beginChatStream();
+
+    await runAgentToolLoop({
+      model: orchestratorModel,
+      coderModel: withCoder ? coderModel! : undefined,
+      systemPrompt: fullSystem,
+      initialMessages,
+      projectPath,
+      signal: streamAbort,
+      callbacks: {
+        onChunk: (chunk) => {
+          trackStreamChunk(chunk);
+          setStreamingContent(prev => prev + chunk);
+        },
+        onRoundComplete: (content, invocations, agent = 'orchestrator') => {
+          setStreamingContent('');
+          if (content || invocations.length > 0) {
+            addMessage({ role: 'assistant', agent, content, toolInvocations: invocations.length > 0 ? invocations : undefined });
+          }
+          applyTokenUsage({
+            inputTokens: roughTokensFromRequestMessages(initialMessages),
+            outputTokens: Math.max(1, roughTokensFromText(content)),
+          });
+        },
+        onFinished: (summary) => {
+          setStreamingContent('');
+          setIsThinking(false);
+          if (summary) {
+            addMessage({ role: 'assistant', agent: 'orchestrator', content: summary });
+          }
+          addLog('Agent task completed', 'success');
+        },
+        onLog: (msg, type) => addLog(msg, type),
+        onTerminal: (line) => addLog(`[terminal] ${line}`, 'info'),
+        onTokens: (usage) => applyTokenUsage(usage),
+        onStatus: (status) => {
+          // Surface orchestrator/coder status in the streaming area
+          setStreamingContent(prev => {
+            // Only show status updates that arrive before content starts flowing
+            // Once real content is streaming, don't overwrite with status noise
+            if (prev) return prev;
+            return '';
+          });
+          void status; // status is shown in logs
+          addLog(status, 'info');
+        },
+        onTimeline: (line) => addLog(`[agent] ${line}`, 'info'),
+        onNoToolWarning: (_attempt, _limit, agent) => {
+          addLog(`${agent} model is not calling tools — may need a stronger model`, 'warning');
+        },
+      },
+    });
+
+    setIsThinking(false);
+    setStreamingContent('');
   };
 
   const handlePlanRevision = useCallback(async (feedback: string) => {

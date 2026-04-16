@@ -932,7 +932,7 @@ export async function runAgentToolLoop(opts: {
       callbacks.onTimeline?.(`Orchestrator r${round} · context overflow · pruning`);
       if (orchestratorContextErrors >= DEFAULT_AGENT_MAX_CONTEXT_ERRORS) {
         callbacks.onLog(`Orchestrator: context too large even after pruning — giving up.`, 'warning');
-        callbacks.onDone('Agent stopped: conversation history too large for this model\'s context window. Try a model with a larger context window, or start a fresh session.');
+        callbacks.onFinished('Agent stopped: conversation history too large for this model\'s context window. Try a model with a larger context window, or start a fresh session.');
         return;
       }
       const pruned = pruneMessagesForContext(messages, orchestratorContextLimit, 4);
@@ -950,7 +950,7 @@ export async function runAgentToolLoop(opts: {
       callbacks.onTimeline?.(`Orchestrator r${round} · tool-call JSON error · injecting repair hint`);
       if (orchestratorJsonParseErrors >= DEFAULT_AGENT_MAX_JSON_PARSE_ERRORS) {
         callbacks.onLog(`Orchestrator: too many JSON parse errors — giving up.`, 'warning');
-        callbacks.onDone(
+        callbacks.onFinished(
           'Agent stopped: repeated tool-call JSON formatting errors. The model may be writing files that are too large or contain unescaped quotes.',
         );
         return;

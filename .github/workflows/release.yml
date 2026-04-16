@@ -201,7 +201,17 @@ jobs:
           fi
           # Normalize secrets copied from UI (remove CR/LF and surrounding spaces).
           api_key="$(printf '%s' "${APPLE_API_KEY:-}" | tr -d '\r\n' | xargs)"
-          api_issuer="$(printf '%s' "${APPLE_API_ISSUER:-}" | tr -d '\r\n' | xargs)"
+          api_issuer_raw="$(printf '%s' "${APPLE_API_ISSUER:-}" | tr -d '\r\n' | xargs)"
+          api_issuer_hex="$(printf '%s' "$api_issuer_raw" | tr -cd '0-9a-fA-F')"
+          api_issuer="$api_issuer_raw"
+          if [ "${#api_issuer_hex}" -eq 32 ]; then
+            api_issuer="$(printf '%s-%s-%s-%s-%s' \
+              "${api_issuer_hex:0:8}" \
+              "${api_issuer_hex:8:4}" \
+              "${api_issuer_hex:12:4}" \
+              "${api_issuer_hex:16:4}" \
+              "${api_issuer_hex:20:12}")"
+          fi
           api_private_key="$(printf '%s' "${APPLE_API_PRIVATE_KEY:-}" | sed 's/\r$//')"
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"

@@ -1282,39 +1282,36 @@ const AIPanel = () => {
         onLog: (msg, type) => addLog(msg, type),
         onTokens: applyTokenUsage,
         onPlanReady: async (p) => {
-          const wasFallbackPlan = planHadError.current;
+          // If the model failed, don't show a mock plan — just show an error
+          if (planHadError.current) {
+            planHadError.current = false;
+            setIsThinking(false);
+            addMessage({
+              role: 'assistant',
+              agent: 'orchestrator',
+              content: '**Could not reach the AI model.** Check your model configuration in Settings — the endpoint may be down or the API key may have expired.',
+            });
+            return;
+          }
+
           setCurrentPlan(p);
 
-          // Build step summary for inline display
           const stepLines = p.steps.map((s, i) => {
             const icon = s.action === 'run_command' ? '`$`' : s.action === 'create_file' ? '`+`' : s.action === 'delete_file' ? '`-`' : '`~`';
             const target = s.command ? `\`${s.command}\`` : s.path ? `\`${s.path}\`` : '';
             return `${i + 1}. ${icon} ${s.description}${target ? ' — ' + target : ''}`;
           }).join('\n');
 
-          if (wasFallbackPlan) {
-            addMessage({
-              role: 'assistant',
-              agent: 'orchestrator',
-              content: `Couldn't reach the AI model — showing a template plan instead.\n\n${stepLines}\n\n> No files will be modified until you approve.`,
-              showPlanCard: true,
-            });
-          } else {
-            addMessage({
-              role: 'assistant',
-              agent: 'orchestrator',
-              content:
-                `Here is a **${p.steps.length}-step plan**. Review it in the card below.\n\n${stepLines}`,
-              showPlanCard: true,
-            });
-          }
+          addMessage({
+            role: 'assistant',
+            agent: 'orchestrator',
+            content: `Here is a **${p.steps.length}-step plan**. Review it in the card below.\n\n${stepLines}`,
+            showPlanCard: true,
+          });
           addLog(`Plan ready: ${p.steps.length} steps (awaiting approval)`, 'success');
           planHadError.current = false;
           lastSubmittedPlannerGoalRef.current = userGoal;
-
-          if (!wasFallbackPlan) {
-            useWorkbenchStore.getState().updatePlanStatus('pending');
-          }
+          useWorkbenchStore.getState().updatePlanStatus('pending');
         },
         onError: (err) => {
           planHadError.current = true;

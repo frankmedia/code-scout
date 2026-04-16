@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical } from 'lucide-react';
+import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import TopBar from '@/components/workbench/TopBar';
 import FileTree from '@/components/workbench/FileTree';
 import EditorPanel from '@/components/workbench/EditorPanel';
@@ -15,6 +15,8 @@ import { useWorkbenchStore, CENTER_TAB_PLAN, CENTER_TAB_BENCHMARK } from '@/stor
 import { useProjectStore } from '@/store/projectStore';
 import { useChatHistoryStore } from '@/store/chatHistoryStore';
 import { syncWorkbenchRootFromActiveProject } from '@/lib/syncWorkbenchFromProject';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
 
 function fileIcon(filename: string) {
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -45,6 +47,8 @@ const Index = () => {
     () => localStorage.getItem('scout-welcomed') !== 'true'
   );
   const [terminalCollapsed, setTerminalCollapsed] = useState(true);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const rightPanelRef = useRef<ImperativePanelHandle>(null);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -90,13 +94,15 @@ const Index = () => {
       <TopBar />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left — Session Sidebar */}
+        {/* Left — Session Sidebar (fixed width) */}
         <div className="w-52 shrink-0 border-r border-border overflow-hidden">
           <SessionSidebar />
         </div>
 
+        {/* Center + Right — resizable panels */}
+        <ResizablePanelGroup direction="horizontal" className="flex-1 overflow-hidden">
         {/* Center — Tab bar + content + terminal */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <ResizablePanel defaultSize={75} minSize={30} className="flex flex-col overflow-hidden min-w-0">
           {/* Tab bar */}
           <div className="flex items-center border-b border-border shrink-0 bg-surface-panel overflow-x-auto">
             {/* Chat tab — permanent */}
@@ -225,12 +231,43 @@ const Index = () => {
               <TerminalPanel />
             </div>
           </div>
-        </div>
+        </ResizablePanel>
 
-        {/* Right — File tree only */}
-        <div className="w-60 shrink-0 border-l border-border overflow-hidden">
-          <FileTree />
-        </div>
+        {/* Right — File tree, resizable and collapsible */}
+        <ResizableHandle withHandle className={rightPanelCollapsed ? 'hidden' : ''} />
+        <ResizablePanel
+          ref={rightPanelRef}
+          defaultSize={25}
+          minSize={0}
+          collapsible
+          collapsedSize={0}
+          onCollapse={() => setRightPanelCollapsed(true)}
+          onExpand={() => setRightPanelCollapsed(false)}
+          className="border-l border-border overflow-hidden"
+        >
+          <div className="h-full flex flex-col">
+            <FileTree />
+          </div>
+        </ResizablePanel>
+        </ResizablePanelGroup>
+
+        {/* Collapse / expand toggle — always visible at far right, outside panel group */}
+        <button
+          onClick={() => {
+            if (rightPanelCollapsed) {
+              rightPanelRef.current?.expand();
+            } else {
+              rightPanelRef.current?.collapse();
+            }
+          }}
+          className="flex items-center justify-center w-5 shrink-0 border-l border-border bg-surface-panel hover:bg-surface-hover text-muted-foreground hover:text-foreground transition-colors"
+          title={rightPanelCollapsed ? 'Show file tree' : 'Hide file tree'}
+        >
+          {rightPanelCollapsed
+            ? <PanelRightOpen className="h-3.5 w-3.5" />
+            : <PanelRightClose className="h-3.5 w-3.5" />
+          }
+        </button>
       </div>
     </div>
   );

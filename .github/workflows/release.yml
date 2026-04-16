@@ -162,10 +162,8 @@ jobs:
             exit 0
           fi
           if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            # Ad-hoc codesign only. Do not set APPLE_ID / TEAM_ID empty — Tauri still
-            # attempts notarization and fails with "Team ID must be at least 3 characters".
-            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
-            exit 0
+            echo "ERROR: APPLE_CERTIFICATE secret is not set — refusing to publish an unsigned macOS build."
+            exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"

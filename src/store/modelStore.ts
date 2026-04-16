@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_LLAMA_CPP_URL, DEFAULT_OLLAMA_URL } from '@/config/llmNetworkDefaults';
+import {
+  DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_AGENT_STALL_WARNING_AFTER_MS,
+  DEFAULT_AGENT_MAX_NO_TOOL_ROUNDS,
+  DEFAULT_AGENT_MAX_ROUNDS,
+  DEFAULT_AGENT_REPETITION_NUDGE_AT,
+  DEFAULT_AGENT_REPETITION_EXIT_AT,
+  DEFAULT_AGENT_MAX_CODER_ROUNDS,
+  DEFAULT_AGENT_MAX_FILE_READ_CHARS,
+  DEFAULT_AGENT_HISTORY_MESSAGES,
+  DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
+} from '@/config/agentBehaviorDefaults';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'tester';
 export type ModelProvider =
@@ -80,6 +92,30 @@ interface ModelStoreState {
   httpTimeoutMs: number;
   setHttpTimeout: (ms: number) => void;
 
+  // ── Agent heartbeat & loop limits ──────────────────────────────────────────
+  agentHeartbeatIntervalMs: number;
+  agentStallWarningAfterMs: number;
+  agentMaxNoToolRounds: number;
+  agentMaxRounds: number;
+  agentRepetitionNudgeAt: number;
+  agentRepetitionExitAt: number;
+  agentMaxCoderRounds: number;
+  agentMaxFileReadChars: number;
+  agentHistoryMessages: number;
+  agentBackgroundSettleMs: number;
+  setAgentHeartbeatIntervalMs: (ms: number) => void;
+  setAgentHeartbeatEnabled: (on: boolean) => void;
+  setAgentStallWarningAfterMs: (ms: number) => void;
+  setAgentMaxNoToolRounds: (n: number) => void;
+  setAgentMaxRounds: (n: number) => void;
+  setAgentRepetitionNudgeAt: (n: number) => void;
+  setAgentRepetitionExitAt: (n: number) => void;
+  setAgentMaxCoderRounds: (n: number) => void;
+  setAgentMaxFileReadChars: (n: number) => void;
+  setAgentHistoryMessages: (n: number) => void;
+  setAgentBackgroundSettleMs: (ms: number) => void;
+  resetAgentLoopLimitsToDefaults: () => void;
+
   addModel: (model: Omit<ModelConfig, 'id'>, makeDefault?: boolean) => void;
   removeModel: (id: string) => void;
   updateModel: (id: string, updates: Partial<ModelConfig>) => void;
@@ -148,6 +184,41 @@ export const useModelStore = create<ModelStoreState>()(
       setOrchestratorTimeout: (ms: number) => set({ orchestratorTimeoutMs: Math.max(5000, ms) }),
       httpTimeoutMs: 30_000,
       setHttpTimeout: (ms: number) => set({ httpTimeoutMs: Math.max(5000, ms) }),
+
+      // ── Agent heartbeat & loop limits ────────────────────────────────────
+      agentHeartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
+      agentStallWarningAfterMs: DEFAULT_AGENT_STALL_WARNING_AFTER_MS,
+      agentMaxNoToolRounds: DEFAULT_AGENT_MAX_NO_TOOL_ROUNDS,
+      agentMaxRounds: DEFAULT_AGENT_MAX_ROUNDS,
+      agentRepetitionNudgeAt: DEFAULT_AGENT_REPETITION_NUDGE_AT,
+      agentRepetitionExitAt: DEFAULT_AGENT_REPETITION_EXIT_AT,
+      agentMaxCoderRounds: DEFAULT_AGENT_MAX_CODER_ROUNDS,
+      agentMaxFileReadChars: DEFAULT_AGENT_MAX_FILE_READ_CHARS,
+      agentHistoryMessages: DEFAULT_AGENT_HISTORY_MESSAGES,
+      agentBackgroundSettleMs: DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
+      setAgentHeartbeatIntervalMs: (ms) => set({ agentHeartbeatIntervalMs: Math.max(0, ms) }),
+      setAgentHeartbeatEnabled: (on) => set({ agentHeartbeatIntervalMs: on ? DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS : 0 }),
+      setAgentStallWarningAfterMs: (ms) => set({ agentStallWarningAfterMs: Math.max(0, ms) }),
+      setAgentMaxNoToolRounds: (n) => set({ agentMaxNoToolRounds: Math.max(1, n) }),
+      setAgentMaxRounds: (n) => set({ agentMaxRounds: Math.max(1, n) }),
+      setAgentRepetitionNudgeAt: (n) => set({ agentRepetitionNudgeAt: Math.max(1, n) }),
+      setAgentRepetitionExitAt: (n) => set({ agentRepetitionExitAt: Math.max(2, n) }),
+      setAgentMaxCoderRounds: (n) => set({ agentMaxCoderRounds: Math.max(1, n) }),
+      setAgentMaxFileReadChars: (n) => set({ agentMaxFileReadChars: Math.max(1000, n) }),
+      setAgentHistoryMessages: (n) => set({ agentHistoryMessages: Math.max(1, n) }),
+      setAgentBackgroundSettleMs: (ms) => set({ agentBackgroundSettleMs: Math.max(1000, ms) }),
+      resetAgentLoopLimitsToDefaults: () => set({
+        agentHeartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
+        agentStallWarningAfterMs: DEFAULT_AGENT_STALL_WARNING_AFTER_MS,
+        agentMaxNoToolRounds: DEFAULT_AGENT_MAX_NO_TOOL_ROUNDS,
+        agentMaxRounds: DEFAULT_AGENT_MAX_ROUNDS,
+        agentRepetitionNudgeAt: DEFAULT_AGENT_REPETITION_NUDGE_AT,
+        agentRepetitionExitAt: DEFAULT_AGENT_REPETITION_EXIT_AT,
+        agentMaxCoderRounds: DEFAULT_AGENT_MAX_CODER_ROUNDS,
+        agentMaxFileReadChars: DEFAULT_AGENT_MAX_FILE_READ_CHARS,
+        agentHistoryMessages: DEFAULT_AGENT_HISTORY_MESSAGES,
+        agentBackgroundSettleMs: DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
+      }),
 
       addModel: (model, makeDefault) => {
         const id = crypto.randomUUID();
@@ -321,6 +392,16 @@ export const useModelStore = create<ModelStoreState>()(
         providerApiKeys: state.providerApiKeys,
         orchestratorTimeoutMs: state.orchestratorTimeoutMs,
         httpTimeoutMs: state.httpTimeoutMs,
+        agentHeartbeatIntervalMs: state.agentHeartbeatIntervalMs,
+        agentStallWarningAfterMs: state.agentStallWarningAfterMs,
+        agentMaxNoToolRounds: state.agentMaxNoToolRounds,
+        agentMaxRounds: state.agentMaxRounds,
+        agentRepetitionNudgeAt: state.agentRepetitionNudgeAt,
+        agentRepetitionExitAt: state.agentRepetitionExitAt,
+        agentMaxCoderRounds: state.agentMaxCoderRounds,
+        agentMaxFileReadChars: state.agentMaxFileReadChars,
+        agentHistoryMessages: state.agentHistoryMessages,
+        agentBackgroundSettleMs: state.agentBackgroundSettleMs,
       }),
     }
   )

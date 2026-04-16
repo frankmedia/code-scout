@@ -323,6 +323,92 @@ const ModelDropdown = () => {
   );
 };
 
+// ─── Two-box agent model display (Orchestrator + Coder) ─────────────────────
+
+/**
+ * Shows two distinct, compact boxes — one for the Orchestrator model and one
+ * for the Coder model — sitting above the chat input area.
+ * Each box displays the provider icon, model id, and current active/thinking
+ * status. Clicking either box opens the full model settings sheet.
+ */
+const AgentModelBoxes = ({
+  isThinking,
+  mode,
+}: {
+  isThinking: boolean;
+  mode: AppMode;
+}) => {
+  const getModelForRole = useModelStore(s => s.getModelForRole);
+  const orchestratorModel = getModelForRole('orchestrator');
+  const coderModel = getModelForRole('coder');
+
+  const orchestratorActive =
+    isThinking && (mode === 'chat' || mode === 'ask' || mode === 'plan');
+  const coderActive =
+    isThinking && (mode === 'agent' || mode === 'build');
+
+  const renderBox = (
+    label: string,
+    emoji: string,
+    model: ReturnType<typeof getModelForRole>,
+    isActive: boolean,
+    accentClass: string,
+    borderClass: string,
+  ) => {
+    const provider = model
+      ? PROVIDER_OPTIONS.find(p => p.id === model.provider)
+      : null;
+
+    return (
+      <div
+        className={`flex items-center gap-2 flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border bg-card text-[11px] transition-colors ${
+          isActive ? borderClass : 'border-border/40'
+        }`}
+        title={model ? `${label}: ${model.name} (${provider?.label ?? model.provider})` : `${label}: not configured`}
+      >
+        <span className="shrink-0 text-[12px]">{emoji}</span>
+        <div className="flex flex-col min-w-0 flex-1">
+          <span className={`font-semibold text-[10px] uppercase tracking-wider ${accentClass}`}>
+            {label}
+          </span>
+          <span className="font-mono text-[11px] text-foreground truncate min-w-0">
+            {model ? model.modelId : <span className="text-muted-foreground italic">not set</span>}
+          </span>
+        </div>
+        {isActive && (
+          provider?.isLocal
+            ? <Network className="h-3 w-3 shrink-0 text-muted-foreground animate-pulse" />
+            : <Cloud className="h-3 w-3 shrink-0 text-muted-foreground animate-pulse" />
+        )}
+        {!isActive && provider && (
+          <ProviderIcon isLocal={provider.isLocal} className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex items-stretch gap-2 w-full min-w-0">
+      {renderBox(
+        'Orchestrator',
+        '🧠',
+        orchestratorModel,
+        orchestratorActive,
+        'text-accent',
+        'border-accent/50',
+      )}
+      {renderBox(
+        'Coder',
+        '💻',
+        coderModel,
+        coderActive,
+        'text-primary',
+        'border-primary/50',
+      )}
+    </div>
+  );
+};
+
 type PendingImage = {
   id: string;
   mediaType: string;
@@ -1956,6 +2042,9 @@ const AIPanel = () => {
       </div>
 
       <div className="pt-2 pb-3 border-t border-border space-y-2 shrink-0">
+        {/* ── Two model boxes: Orchestrator + Coder ── */}
+        <AgentModelBoxes isThinking={isThinking} mode={mode} />
+
         {/* ── Toolbar row: mode toggle · model · stop · context bar ── */}
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex items-center bg-secondary rounded-lg p-1 shrink-0">

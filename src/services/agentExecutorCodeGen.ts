@@ -167,7 +167,7 @@ export function buildFileHints(filePath: string): string {
 
 // ─── Code generation ────────────────────────────────────────────────────────
 
-export function generateCodeWithModel(
+export async function generateCodeWithModel(
   model: ModelConfig,
   prompt: string,
   signal?: AbortSignal,
@@ -228,7 +228,12 @@ export function generateCodeWithModel(
 
   const userContent = prompt + formatContextFilesBlock(contextFiles);
 
-  return new Promise((resolve, reject) => {
+  // Hard timeout so a hung model call can never freeze plan execution.
+  // Uses configurable orchestratorTimeoutMs (default 15s) × 4 for code gen (longer output).
+  const { useModelStore } = await import('@/store/modelStore');
+  const timeoutMs = Math.max(useModelStore.getState().orchestratorTimeoutMs * 4, 30_000);
+
+  const modelPromise = new Promise<string>((resolve, reject) => {
     const messages: ModelRequestMessage[] = [
       {
         role: 'system',
@@ -248,6 +253,13 @@ CRITICAL — Tailwind CSS: If writing a CSS file that uses Tailwind, include the
       (err) => { reject(err); },
     );
   });
+
+  return Promise.race([
+    modelPromise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Code generation timed out after ${timeoutMs / 1000}s`)), timeoutMs),
+    ),
+  ]);
 }
 
 export function cleanCodeResponse(text: string): string {

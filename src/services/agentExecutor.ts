@@ -562,7 +562,6 @@ function generateCodeWithModel(
   contextFiles?: Record<string, string>,
 ): Promise<string> {
   const storeName = useWorkbenchStore.getState().projectName ?? '';
-  // Build framework-specific rules to prevent cross-framework confusion
   const fwk = _projectContext?.framework ?? '';
   const fwkRules = fwk.toLowerCase().includes('react')
     ? 'This is a REACT project. Use @vitejs/plugin-react (NOT plugin-vue, NOT plugin-svelte). Use .jsx/.tsx files. Import from "react" and "react-dom".'
@@ -575,7 +574,6 @@ function generateCodeWithModel(
     ? `\nPROJECT CONTEXT:\n  PROJECT_DIR: ${storeName}\n  FRAMEWORK: ${_projectContext.framework}\n  LANGUAGE: ${_projectContext.language}\n  PACKAGE_MANAGER: ${_projectContext.packageManager}\n  ${_projectContext.entryPoints?.length ? `ENTRY_POINTS: ${_projectContext.entryPoints.join(', ')}` : ''}\n${fwkRules}\nDo NOT import libraries that aren't installed. The project directory is "${storeName}" — do NOT create subdirectories or rename the project.\n`
     : '';
 
-  // Include any web research gathered from web_search / fetch_url steps
   const webCtx = _webResearchContext.length > 0
     ? `\n\nWEB RESEARCH (from earlier steps — use this as reference):\n${_webResearchContext.join('\n---\n')}\n`
     : '';
@@ -592,7 +590,6 @@ function generateCodeWithModel(
     ? `\nINSTALL HISTORY (what worked/failed in past sessions — do not repeat failures):\n${_installHistoryForCoder.slice(0, 1000)}\n`
     : '';
 
-  // Agent memory — past decisions, fixes, and learnings
   let memCtx = '';
   try {
     const projectName = useWorkbenchStore.getState().projectName;
@@ -602,7 +599,11 @@ function generateCodeWithModel(
 
   const userContent = prompt + formatContextFilesBlock(contextFiles);
 
-  return new Promise((resolve, reject) => {
+  // Hard timeout: configurable orchestratorTimeoutMs × 4, minimum 30s.
+  // Prevents hung model calls from freezing plan execution forever.
+  const timeoutMs = Math.max(useModelStore.getState().orchestratorTimeoutMs * 4, 30_000);
+
+  const modelPromise = new Promise<string>((resolve, reject) => {
     const messages: ModelRequestMessage[] = [
       {
         role: 'system',
@@ -620,6 +621,13 @@ function generateCodeWithModel(
       (err) => { reject(err); },
     );
   });
+
+  return Promise.race([
+    modelPromise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Code generation timed out after ${timeoutMs / 1000}s`)), timeoutMs),
+    ),
+  ]);
 }
 
 function cleanCodeResponse(text: string): string {
@@ -2916,6 +2924,8 @@ export async function executePlan(
 
     callbacks.onStepDone(step);
   }
+
+  useWorkbenchStore.getState().addMessage({ role: 'assistant', agent: 'coder', content: `🟢 DEBUG: step loop ended | stoppedEarly=${stoppedEarly} | stopReason=${stopReason.slice(0, 80)}` });
 
   if (stoppedEarly) {
     callbacks.onTerminal(

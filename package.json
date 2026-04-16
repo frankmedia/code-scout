@@ -1,7 +1,7 @@
 {
   "name": "code-scout",
   "private": true,
-  "version": "0.1.15",
+  "version": "0.1.18",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +17,7 @@
     "tauri:build:notarized": "bash scripts/build-signed-notarized.sh",
     "release:mac": "bash scripts/release-mac.sh",
     "version:bump": "node scripts/bump-app-version.mjs",
+    "release:version": "bash scripts/release-version.sh",
     "tauri:icon": "node scripts/generate-app-icon.mjs"
   },
   "dependencies": {

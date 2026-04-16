@@ -55,11 +55,11 @@ jobs:
           - platform: windows-latest
             rust_target: x86_64-pc-windows-msvc
             # scout-stt is a macOS-only Swift sidecar; strip it from the Windows bundle.
-            extra_args: "--config tauri.nosidecar.conf.json"
+            extra_args: "--config src-tauri/tauri.nosidecar.conf.json"
           - platform: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
             # scout-stt is a macOS-only Swift sidecar; strip it from the Linux bundle.
-            extra_args: "--config tauri.nosidecar.conf.json"
+            extra_args: "--config src-tauri/tauri.nosidecar.conf.json"
 
     runs-on: ${{ matrix.platform }}
     env:

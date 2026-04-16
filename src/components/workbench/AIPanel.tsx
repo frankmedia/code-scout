@@ -530,12 +530,27 @@ const PlanActivityFeed = ({
           <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Orchestrator activity
           </span>
+          <div className="flex-1" />
           {isActive && (
-            <span className="ml-auto font-mono text-primary/70 tabular-nums">
-              {fmtElapsed(elapsedMs)}
-            </span>
+            <>
+              <Loader2 className="h-3 w-3 text-primary animate-spin shrink-0" />
+              <span className="font-mono text-primary/70 tabular-nums">
+                {fmtElapsed(elapsedMs)}
+              </span>
+            </>
           )}
         </div>
+
+        {/* animated progress bar at top while active */}
+        {isActive && (
+          <div className="h-[2px] w-full bg-border/30 overflow-hidden">
+            <div className="h-full w-1/3 bg-primary/60 rounded-full animate-[shimmer_1.5s_ease-in-out_infinite]"
+              style={{ animation: 'shimmer 1.5s ease-in-out infinite' }}
+            />
+            <style>{`@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }`}</style>
+          </div>
+        )}
+
         {/* event rows */}
         <div className="px-3 py-2 space-y-1.5 font-mono">
           {activities.map((a) => {
@@ -543,9 +558,8 @@ const PlanActivityFeed = ({
             const stepCount = isReceiving ? extractStepCount(a.text) : 0;
             const tokPerSec = isReceiving ? extractTokPerSec(a.text) : null;
 
-            // Split "Receiving · ~370 tokens · 12 tok/s · 3 steps found" into parts
             const mainLabel = isReceiving
-              ? a.text.split(' · ').slice(0, 2).join(' · ')   // "Receiving · ~370 tokens"
+              ? a.text.split(' · ').slice(0, 2).join(' · ')
               : a.text;
             const badges: string[] = [];
             if (tokPerSec) badges.push(`${tokPerSec} tok/s`);
@@ -557,7 +571,7 @@ const PlanActivityFeed = ({
                   {a.done ? (
                     <CheckCircle2 className="h-3 w-3 text-success shrink-0" />
                   ) : (
-                    <Circle className="h-3 w-3 text-primary shrink-0 animate-pulse" />
+                    <Loader2 className="h-3 w-3 text-primary shrink-0 animate-spin" />
                   )}
                   <span className="shrink-0 leading-none">{activityIcon(a.text)}</span>
                   <span className={a.done ? 'text-muted-foreground' : 'text-foreground'}>

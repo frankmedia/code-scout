@@ -25,7 +25,7 @@ const SKIP_DIRS: &[&str] = &[
     "__pycache__", ".turbo", "coverage", ".nuxt", ".output", "out",
     "target", ".DS_Store",
 ];
-const MAX_FILES: usize = 600;
+const MAX_FILES: usize = 5000;
 /// Deeper trees (e.g. PHP / legacy repos) still need children past depth 8.
 const MAX_DEPTH: usize = 16;
 const MAX_FILE_SIZE: u64 = 2_000_000; // 2 MB

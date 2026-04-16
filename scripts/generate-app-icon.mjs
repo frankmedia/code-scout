@@ -2,7 +2,7 @@
  * Builds a 1024² master: white squircle plate (transparent outside) + centered logo on top.
  * Avoids `dest-in` masking — that was wiping the glyph and left a blank white dock tile.
  */
-import { execFileSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -71,9 +71,13 @@ await sharp({
   .toFile(tmpMaster);
 
 try {
-  execFileSync('npx', ['tauri', 'icon', tmpMaster, '-o', outDir], {
+  const qMaster = JSON.stringify(tmpMaster);
+  const qOut = JSON.stringify(outDir);
+  execSync(`npx --yes tauri icon ${qMaster} -o ${qOut}`, {
     cwd: root,
     stdio: 'inherit',
+    shell: true,
+    windowsHide: true,
   });
 } finally {
   try {

@@ -178,7 +178,9 @@ const RoleModelDropdown = ({
         className="flex items-center gap-1.5 rounded-md bg-secondary border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
         title={currentModel ? `${label}: ${currentModel.name} (${currentModel.modelId})` : `${label}: not configured`}
       >
-        <span className="text-[9px] font-semibold uppercase tracking-wider opacity-60">{label}</span>
+        {role === 'orchestrator'
+          ? <Brain className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+          : <Terminal className="h-3 w-3 shrink-0 opacity-70" aria-hidden />}
         <span className="font-mono truncate max-w-[100px]">{displayName}</span>
         <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
       </button>

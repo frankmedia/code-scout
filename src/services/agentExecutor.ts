@@ -1838,9 +1838,9 @@ async function executeWebSearch(
     return;
   }
 
-  // Wrap every HTTP call with a hard 30-second timeout so a stalled network
+  // Wrap every HTTP call with a configurable timeout so a stalled network
   // request can never freeze plan execution indefinitely.
-  const HTTP_TIMEOUT_MS = 30_000;
+  const HTTP_TIMEOUT_MS = useModelStore.getState().httpTimeoutMs;
   const timedFetch = (url: string) =>
     Promise.race([
       makeHttpRequest(url),
@@ -1966,10 +1966,11 @@ async function executeFetchUrl(
   }
 
   try {
+    const fetchTimeout = useModelStore.getState().httpTimeoutMs;
     const response = await Promise.race([
       makeHttpRequest(url),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`HTTP timeout after 30s: ${url}`)), 30_000),
+        setTimeout(() => reject(new Error(`HTTP timeout after ${fetchTimeout / 1000}s: ${url}`)), fetchTimeout),
       ),
     ]);
 

@@ -1707,7 +1707,7 @@ const AIPanel = () => {
               role: 'user',
               content: `Goal:\n${originalGoal}\n\nResults:\n${stepResults.slice(0, 8000)}`,
             },
-          ], { signal: AbortSignal.timeout(15_000), maxOutputTokens: 512 }),
+          ], { signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs), maxOutputTokens: 512 }),
           (chunk: string) => { full += chunk; },
           (finalText: string) => resolve(finalText || full),
           (err: Error) => reject(err),

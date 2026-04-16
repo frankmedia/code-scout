@@ -440,9 +440,69 @@ const ModelCard = ({ model, onEdit }: { model: ModelConfig; onEdit: (model: Mode
   );
 };
 
+// ─── Advanced Settings ───────────────────────────────────────────────────────
+
+const AdvancedSettings = () => {
+  const orchTimeout = useModelStore(s => s.orchestratorTimeoutMs);
+  const setOrchTimeout = useModelStore(s => s.setOrchestratorTimeout);
+  const httpTimeout = useModelStore(s => s.httpTimeoutMs);
+  const setHttpTimeout = useModelStore(s => s.setHttpTimeout);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-xs font-semibold text-foreground mb-3">Timeouts</h3>
+        <div className="space-y-3">
+          {/* Orchestrator evaluation timeout */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-foreground">Orchestrator evaluation</p>
+              <p className="text-[10px] text-muted-foreground">
+                How long to wait for the orchestrator to evaluate plan results before marking as complete.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                min={5}
+                max={300}
+                value={Math.round(orchTimeout / 1000)}
+                onChange={e => setOrchTimeout(Number(e.target.value) * 1000)}
+                className="w-16 rounded border border-border bg-background px-2 py-1 text-xs text-foreground text-right"
+              />
+              <span className="text-[10px] text-muted-foreground">sec</span>
+            </div>
+          </div>
+
+          {/* HTTP request timeout */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-foreground">Web search / fetch</p>
+              <p className="text-[10px] text-muted-foreground">
+                Max time per HTTP request during web search and URL fetch plan steps.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                min={5}
+                max={300}
+                value={Math.round(httpTimeout / 1000)}
+                onChange={e => setHttpTimeout(Number(e.target.value) * 1000)}
+                className="w-16 rounded border border-border bg-background px-2 py-1 text-xs text-foreground text-right"
+              />
+              <span className="text-[10px] text-muted-foreground">sec</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Settings Modal ─────────────────────────────────────────────────────
 
-type SettingsTab = 'discover' | 'models';
+type SettingsTab = 'discover' | 'models' | 'advanced';
 
 const ModelSettings = () => {
   const { models, settingsOpen, setSettingsOpen, addModel, updateModel } = useModelStore();
@@ -524,6 +584,7 @@ const ModelSettings = () => {
           {([
             { id: 'discover', label: 'Discover' },
             { id: 'models', label: 'Models & Roles' },
+            { id: 'advanced', label: 'Advanced' },
           ] as { id: SettingsTab; label: string }[]).map(t => (
             <button
               key={t.id}
@@ -611,6 +672,11 @@ const ModelSettings = () => {
                 </>
               )}
             </>
+          )}
+
+          {/* ─── Advanced Tab ─── */}
+          {tab === 'advanced' && (
+            <AdvancedSettings />
           )}
         </div>
 

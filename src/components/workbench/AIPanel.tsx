@@ -814,9 +814,9 @@ const AIPanel = () => {
     setLiveTurnTokens(prev => {
       const newIn = Math.max(prev.in, inn);
       const newOut = Math.max(prev.out, out);
-      // If output grew, add the delta to session total
+      // Defer the store update to avoid setState-during-render warning
       const outDelta = newOut - prev.out;
-      if (outDelta > 0) addAiSessionTokens(outDelta);
+      if (outDelta > 0) queueMicrotask(() => addAiSessionTokens(outDelta));
       return { in: newIn, out: newOut };
     });
   }, [addAiSessionTokens]);

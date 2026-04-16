@@ -36,6 +36,16 @@ export default defineConfig(({ mode }) => {
         process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari16",
       minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
       sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
+      /** Main chunk is ~1.4MB — default 500kB warning is noise until we code-split. */
+      chunkSizeWarningLimit: 1600,
+      rollupOptions: {
+        onwarn(warning, defaultHandler) {
+          const msg = typeof warning.message === "string" ? warning.message : "";
+          // Mixed static + dynamic import of the same module — bundle still valid; Rollup cannot lazy-split.
+          if (msg.includes("dynamic import will not move module into another chunk")) return;
+          defaultHandler(warning);
+        },
+      },
     },
   };
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeRmCommaSeparatedPaths } from './agentExecutor';
+import { sanitizeRmCommaSeparatedPaths } from './agentExecutorUtils';
 
 describe('sanitizeRmCommaSeparatedPaths', () => {
   it('splits comma-separated rm targets', () => {

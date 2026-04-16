@@ -27,6 +27,7 @@ import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
 import { callModel, modelToRequest, type ModelRequestMessage } from '@/services/modelApi';
 import { submitPlanRevision } from '@/services/planRevisionBridge';
+import { planExecutionProgressSuffix } from '@/utils/planExecutionUi';
 
 const ACTION_ICONS: Record<string, React.ReactNode> = {
   create_file: <FilePlus className="h-3 w-3" />,
@@ -99,10 +100,12 @@ export function ChatPlanCard() {
       agent: 'coder',
       content: `Plan approved! Executing ${stepsToRun.length} step${stepsToRun.length !== 1 ? 's' : ''}...${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}`,
     });
+    addTerminalOutput('▶ Starting plan runner (first step begins after workspace prep)…');
 
     const coderModel = getModelForRole('coder');
 
-    await orchestrator.executePlan(
+    try {
+      await orchestrator.executePlan(
       plan,
       skippedSteps,
       {
@@ -140,7 +143,8 @@ export function ChatPlanCard() {
           const serverSteps = planState?.steps.filter(s => s.serverUrl) ?? [];
           const urlList = serverSteps.map(s => `**${s.serverUrl}**`).join(' · ');
 
-          // Gather step outputs and ask model to summarize
+          // Gather step outputs — always surfaced to chat so research-style plans
+          // (grep, etc.) still answer the user even if the summarizer model hangs.
           const stepResults = (planState?.steps ?? []).map((s, i) => {
             let result = `Step ${i + 1}: ${s.description} — ${s.status}`;
             if (s.fullOutput?.trim()) result += `\nOutput:\n${s.fullOutput.trim().slice(0, 2000)}`;
@@ -148,8 +152,25 @@ export function ChatPlanCard() {
             return result;
           }).join('\n\n');
 
+          const excerpt = stepResults.trim().slice(0, 8000);
+          const buildCompletionFallback = (preamble?: string): string => {
+            const head = preamble ? `${preamble}\n\n` : '';
+            if (failed > 0) {
+              return `${head}Finished with **${failed} failed step(s)**. Check Terminal / Logs for details.\n\n${excerpt}`;
+            }
+            if (urlList) {
+              return `${head}All steps completed! App running at ${urlList}.${excerpt ? `\n\n---\n**Step output:**\n\n${excerpt}` : ''}`;
+            }
+            if (excerpt) {
+              return `${head}All steps completed.\n\n---\n**Step output:**\n\n${excerpt}`;
+            }
+            return `${head}All steps completed! Review the changes in the editor.`;
+          };
+
           const coderM = getModelForRole('coder');
-          if (coderM?.enabled && stepResults) {
+          /** Bounded wait so a stuck summary stream cannot leave the chat thread without a reply. */
+          const SUMMARY_MS = 120_000;
+          if (coderM?.enabled && stepResults.trim()) {
             const originalQuestion = [...useWorkbenchStore.getState().messages]
               .reverse()
               .find(m => m.role === 'user')?.content ?? '';
@@ -157,34 +178,54 @@ export function ChatPlanCard() {
               { role: 'system', content: 'You are a helpful coding assistant. The user asked a question and a plan was executed to answer it. Analyze the step results below and provide a clear, concise answer to the user\'s original question. Be direct and specific.' },
               { role: 'user', content: `Original question: ${originalQuestion}\n\nPlan execution results:\n${stepResults}\n\nProvide a clear answer based on these results.` },
             ];
+            let summarySettled = false;
+            const settle = (fn: () => void) => {
+              if (summarySettled) return;
+              summarySettled = true;
+              fn();
+            };
             callModel(
-              modelToRequest(coderM, summaryPrompt),
+              modelToRequest(coderM, summaryPrompt, {
+                signal: AbortSignal.timeout(SUMMARY_MS),
+                maxOutputTokens: 4096,
+              }),
               () => {},
               (fullText) => {
-                addMessage({ role: 'assistant', agent: 'coder', content: fullText });
+                settle(() => {
+                  addMessage({ role: 'assistant', agent: 'coder', content: fullText.trim() || buildCompletionFallback() });
+                });
               },
-              () => {
-                const fallback = failed > 0
-                  ? `Finished with **${failed} failed step(s)**.`
-                  : urlList
-                  ? `All steps completed! App running at ${urlList}.`
-                  : 'All steps completed! Review the changes in the editor.';
-                addMessage({ role: 'assistant', agent: 'coder', content: fallback });
+              (err) => {
+                settle(() => {
+                  const why =
+                    err.name === 'TimeoutError' || /aborted|timeout/i.test(err.message)
+                      ? `Summary timed out after ${SUMMARY_MS / 1000}s — here are the plan results.`
+                      : `Summary could not run (${err.message.slice(0, 200)}) — here are the plan results.`;
+                  addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback(why) });
+                });
               },
             );
           } else {
-            const content = failed > 0
-              ? `Finished with **${failed} failed step(s)**. Check Terminal / Logs for details.`
-              : urlList
-              ? `All steps completed! App running at ${urlList}.`
-              : 'All steps completed! Review the changes in the editor.';
-            addMessage({ role: 'assistant', agent: 'coder', content });
+            addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback() });
           }
         },
         onLog: (message, type) => addLog(message, type),
       },
       coderModel,
     );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      updatePlanStatus('done');
+      const st = useWorkbenchStore.getState().currentPlan;
+      const stuck = st?.steps.find(s => s.status === 'running' || s.status === 'repairing');
+      if (stuck) updateStepStatus(stuck.id, 'error', msg);
+      addLog(`Plan execution failed: ${msg}`, 'error');
+      addMessage({
+        role: 'assistant',
+        agent: 'coder',
+        content: `**Plan execution stopped** — ${msg.slice(0, 3500)}`,
+      });
+    }
   }, [plan, skippedSteps, setMode, updatePlanStatus, updateStepStatus, addLog, addMessage, addTerminalOutput, getModelForRole, updateStepLiveOutput, updateStepServerUrl]);
 
   const handleReject = useCallback(() => {
@@ -225,8 +266,8 @@ export function ChatPlanCard() {
   const isPending = plan.status === 'pending';
   const isExecuting = plan.status === 'executing';
   const isDone = plan.status === 'done';
-  const doneCount = plan.steps.filter(s => s.status === 'done').length;
   const errorCount = plan.steps.filter(s => s.status === 'error').length;
+  const doneCount = plan.steps.filter(s => s.status === 'done').length;
   const total = plan.steps.length;
 
   return (
@@ -238,7 +279,7 @@ export function ChatPlanCard() {
           <p className="text-[10px] text-muted-foreground mt-0.5">
             {total} step{total !== 1 ? 's' : ''}
             {isPending && skippedSteps.size > 0 && ` · ${skippedSteps.size} skipped`}
-            {isExecuting && ` · running ${doneCount + 1}/${total}`}
+            {isExecuting && ` · ${planExecutionProgressSuffix(plan.steps)}`}
             {isDone && (errorCount > 0 ? ` · ${errorCount} failed` : ' · complete')}
           </p>
           {(plan.validationCommand || isExecuting) && (

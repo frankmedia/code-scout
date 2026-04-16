@@ -4,8 +4,48 @@
  * Small utility functions used across the agent executor pipeline.
  */
 
-import type { Plan } from '@/store/workbenchStore';
+import type { FileNode, Plan } from '@/store/workbenchStore';
 import { normalizeCommandPaths, resolveFilePath } from './pathResolution';
+
+/** Cap for plan-time file indexing — uncapped recursion can freeze the UI on huge trees. */
+export const PLAN_FLATTEN_MAX_FILES = 35_000;
+
+/**
+ * Iterative flatten with a hard cap (used before `normalizePlanPaths` in `executePlan`).
+ */
+/**
+ * Race an async operation against a wall clock — used so plan startup (e.g. install
+ * history read) cannot block the UI indefinitely.
+ */
+export async function raceWithTimeout<T>(promise: Promise<T>, ms: number, timeoutValue: T): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>(resolve => setTimeout(() => resolve(timeoutValue), ms)),
+  ]);
+}
+
+export function flattenAllFilesCapped(
+  nodes: FileNode[],
+  onTruncated?: (message: string) => void,
+): { path: string; name: string }[] {
+  const result: { path: string; name: string }[] = [];
+  const stack: FileNode[] = [...nodes].reverse();
+  while (stack.length > 0) {
+    if (result.length >= PLAN_FLATTEN_MAX_FILES) {
+      onTruncated?.(
+        `Large workspace: indexed the first ${PLAN_FLATTEN_MAX_FILES} file paths only — ` +
+          `path auto-fix during this plan may miss rare paths.`,
+      );
+      break;
+    }
+    const n = stack.pop()!;
+    if (n.type === 'file') result.push({ path: n.path, name: n.name });
+    if (n.children) {
+      for (let i = n.children.length - 1; i >= 0; i--) stack.push(n.children[i]);
+    }
+  }
+  return result;
+}
 
 /**
  * LLMs often emit `rm -rf node_modules,package-lock.json` — commas create ONE invalid path.

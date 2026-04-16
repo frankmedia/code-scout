@@ -1697,10 +1697,15 @@ const AIPanel = () => {
           'You are an orchestrator evaluating whether a plan achieved the user\'s goal.',
           'You will be given the original goal and the execution results of each step.',
           '',
-          'Respond with a JSON object (no markdown fences):',
-          '{ "done": true, "summary": "..." }  — if the goal is fully achieved',
-          '{ "done": false, "followUp": "..." } — if more work is needed. The followUp field should',
-          '  describe what still needs to happen so a new plan can be generated.',
+          'Preferred response format — a JSON object (no markdown fences):',
+          '{ "done": true, "summary": "one-sentence summary of what was accomplished" }',
+          '{ "done": false, "followUp": "description of what still needs to happen" }',
+          '',
+          'If you cannot respond in JSON, use one of these plain-text prefixes instead:',
+          '  DONE: <your summary>',
+          '  MORE: <what still needs doing>',
+          '',
+          'If neither format is possible, write a plain-text answer — it will be treated as DONE.',
           '',
           'Be conservative: if all steps succeeded and the results look correct, say done.',
           'Only say not done if there is clear evidence of missing work or failures that need fixing.',
@@ -1726,37 +1731,88 @@ const AIPanel = () => {
         );
       });
 
-      // Parse the orchestrator's evaluation
-      let parsed: { done?: boolean; followUp?: string; summary?: string } = {};
+      // ── Flexible parsing: JSON first, then keyword/prose fallback ──────────
+      // The orchestrator may reply in JSON, plain text, or markdown — all are
+      // valid. We must never silently swallow a response.
+      let isDone: boolean | undefined;
+      let summary: string | undefined;
+      let followUp: string | undefined;
+
+      // 1. Try strict JSON extraction (handles code-fenced JSON too)
       try {
-        const jsonMatch = result.match(/\{[\s\S]*\}/);
-        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        const jsonMatch = result.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+          const p = JSON.parse(jsonMatch[0]) as { done?: boolean; summary?: string; followUp?: string };
+          isDone = p.done;
+          summary = p.summary;
+          followUp = p.followUp;
+        }
       } catch {
-        ws.addLog('Orchestrator evaluation: could not parse response, assuming done', 'info');
-        return;
+        // JSON parse failed — fall through to keyword detection below
       }
 
-      if (parsed.done === false && parsed.followUp) {
+      // 2. Keyword / prose fallback when no valid JSON was found
+      if (isDone === undefined) {
+        const lower = result.toLowerCase();
+        // Explicit prefixes: "DONE: ..." / "MORE: ..."
+        const doneM = result.match(/^DONE[:\s]+([\s\S]+)/i);
+        const moreM = result.match(/^MORE[:\s]+([\s\S]+)/i);
+        if (doneM) {
+          isDone = true;
+          summary = doneM[1].trim();
+        } else if (moreM) {
+          isDone = false;
+          followUp = moreM[1].trim();
+        } else if (/\b(not complete|not done|not finished|incomplete|more work|additional work|follow.?up needed)\b/.test(lower)) {
+          isDone = false;
+          followUp = result.trim();
+        } else {
+          // Default: treat the full response as a completion summary
+          isDone = true;
+          summary = result.trim();
+        }
+      }
+
+      if (isDone === false && (followUp ?? summary)) {
+        const followUpText = followUp ?? summary ?? 'More work is required.';
         // Orchestrator wants more work — trigger a new planning round
         ws.addMessage({
           role: 'assistant',
           agent: 'orchestrator',
-          content: `The previous plan steps are done, but more work is needed:\n\n${parsed.followUp}\n\nGenerating a follow-up plan...`,
+          content: `The previous plan steps are done, but more work is needed:\n\n${followUpText}\n\nGenerating a follow-up plan...`,
         });
         ws.addLog('Orchestrator requested follow-up plan', 'info');
         setPlanActivities([]);
         setIsThinking(true);
         requestStartTime.current = Date.now();
         await runPlanningWithUserGoalRef.current(
-          `${originalGoal}\n\n---\nPrevious plan execution results:\n${stepResults.slice(0, 6000)}\n\nThe previous plan partially addressed the goal. Additional work needed:\n${parsed.followUp}\n\nProduce a follow-up plan for the remaining work.`,
+          `${originalGoal}\n\n---\nPrevious plan execution results:\n${stepResults.slice(0, 6000)}\n\nThe previous plan partially addressed the goal. Additional work needed:\n${followUpText}\n\nProduce a follow-up plan for the remaining work.`,
         );
         saveCurrentChat(useWorkbenchStore.getState().messages);
       } else {
+        // Task complete — always post the orchestrator's conclusion to chat
+        ws.addMessage({
+          role: 'assistant',
+          agent: 'orchestrator',
+          content: summary?.trim()
+            ? summary.trim()
+            : 'Task completed — all steps executed successfully.',
+        });
         ws.addLog('Orchestrator confirmed: task complete', 'success');
       }
     } catch (err) {
-      // Non-fatal — the summary from ChatPlanCard already posted
-      ws.addLog(`Orchestrator evaluation skipped: ${err instanceof Error ? err.message : String(err)}`, 'info');
+      // Timeout or network error — the coder summary is already in chat,
+      // but we must still unblock the UI so the user knows the loop ended.
+      const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || /timeout|aborted/i.test(err.message));
+      ws.addLog(`Orchestrator evaluation ${isTimeout ? 'timed out' : 'failed'}: ${err instanceof Error ? err.message : String(err)}`, 'info');
+      // Post a visible message so chat is never left hanging
+      ws.addMessage({
+        role: 'assistant',
+        agent: 'orchestrator',
+        content: isTimeout
+          ? 'Evaluation timed out — the plan steps have been completed. Check the output above for results.'
+          : 'Plan steps completed. (Orchestrator evaluation unavailable.)',
+      });
     }
   }, [setIsThinking, saveCurrentChat, setPlanActivities]);
 

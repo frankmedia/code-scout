@@ -28,6 +28,7 @@ import { classifyFailure } from './validationRunner';
 import type { RepairAttempt } from './repairTypes';
 import { useTaskStore, EscalationDecision, EscalationContext } from '@/store/taskStore';
 import { useAgentMemoryStore } from '@/store/agentMemoryStore';
+import { flattenAllFilesCapped, raceWithTimeout } from './agentExecutorUtils';
 import {
   isInstallCommand,
   buildInstallRecord,
@@ -2194,14 +2195,16 @@ export async function executePlan(
     _skillMd = useProjectMemoryStore.getState().getMemory(store.projectName)?.skillMd || undefined;
   } catch { /* non-fatal */ }
 
-  // Pull install history so coder knows what to avoid repeating
+  // Pull install history so coder knows what to avoid repeating (bounded — disk read must not block forever)
   _installHistoryForCoder = undefined;
   if (store.projectPath) {
     try {
       const root = resolveProjectRoot(store.projectPath, store.files);
       if (root) {
         const { buildInstallContext } = await import('@/services/installTracker');
-        _installHistoryForCoder = await buildInstallContext(root) || undefined;
+        const INSTALL_CTX_MS = 6_000;
+        _installHistoryForCoder =
+          (await raceWithTimeout(buildInstallContext(root), INSTALL_CTX_MS, undefined)) || undefined;
       }
     } catch { /* non-fatal */ }
   }
@@ -2211,8 +2214,12 @@ export async function executePlan(
   // Reset web research context for this plan execution
   _webResearchContext = [];
 
+  // Let the UI paint "executing" before any heavy synchronous work (large file trees).
+  callbacks.onLog('Plan engine: preparing…', 'info');
+  await new Promise<void>(r => setTimeout(r, 0));
+
   // Pre-process plan paths — fix hallucinated paths before execution begins
-  const allFiles = flattenAllFiles(store.files);
+  const allFiles = flattenAllFilesCapped(store.files, (m) => callbacks.onLog(m, 'warning'));
   normalizePlanPaths(plan, (p) => store.getFileContent(p), allFiles, callbacks.onLog);
 
   callbacks.onTerminal('─── Executing plan: ' + plan.summary + ' ───');
@@ -2273,6 +2280,18 @@ export async function executePlan(
         callbacks.onTerminal(`⚙ Entering repair loop for arm64 platform fix...`);
         stepThrowError = stepError;
         // Fall through to validation block below with a synthetic failure
+      } else if (
+        step.action === 'run_command' &&
+        /timed out|Command timed out/i.test(stepError) &&
+        /^(?:git\s+grep|grep|rg|ack|ag)\b/i.test((step.command ?? '').trim())
+      ) {
+        // Read-only search over the repo — do not enter the heavy repair engine; user only waits longer.
+        callbacks.onLog(`Search command hit the time limit — stopping the plan. ${stepError.slice(0, 200)}`, 'error');
+        callbacks.onTerminal(`! ${stepError}`);
+        callbacks.onStepError(step, stepError);
+        stoppedEarly = true;
+        stopReason = stepError;
+        break stepLoop;
       } else if (step.action === 'run_command') {
         // All run_command failures enter the repair loop — the agent decides
         // whether to retry, search the web, try different flags, or move on.

@@ -61,6 +61,28 @@ export function resolveProjectRoot(projectPath: string, files: FileNode[]): stri
   return projectPath;
 }
 
+/**
+ * Shell `run_command` steps need a resolved on-disk project root.
+ * Without it, `executeCommand` would run in the wrong directory or fail opaquely.
+ */
+export function ensureShellCwdForPlan(
+  effectivePath: string | undefined,
+  callbacks: {
+    onLog: (message: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
+    onTerminal: (line: string) => void;
+    onActivityComplete?: (activityId: string) => void;
+  },
+  cmdActId: string | undefined,
+): void {
+  if (effectivePath?.trim()) return;
+  if (cmdActId) callbacks.onActivityComplete?.(cmdActId);
+  const msg =
+    'Shell steps require a project folder on disk. Use **File → Open Folder…** (or reopen the project), then run the plan again.';
+  callbacks.onLog(msg, 'error');
+  callbacks.onTerminal(`! ${msg}`);
+  throw new Error(msg);
+}
+
 interface PackageScripts {
   [key: string]: string | undefined;
 }

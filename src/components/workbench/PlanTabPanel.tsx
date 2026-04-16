@@ -17,6 +17,7 @@ import { useWorkbenchStore, PlanStep } from '@/store/workbenchStore';
 import { useModelStore } from '@/store/modelStore';
 import { orchestrator } from '@/services/orchestrator';
 import { submitPlanRevision } from '@/services/planRevisionBridge';
+import { planExecutionProgressSuffix } from '@/utils/planExecutionUi';
 
 const DESTRUCTIVE_ACTIONS = new Set(['delete_file']);
 const SHELL_ACTIONS = new Set(['run_command']);
@@ -46,6 +47,7 @@ const PlanTabPanel = () => {
     updateStepServerUrl,
     addLog,
     addMessage,
+    addTerminalOutput,
     fileHistory,
     rollbackAll,
     setMode,
@@ -71,8 +73,8 @@ const PlanTabPanel = () => {
   const isRejected = currentPlan.status === 'rejected';
   const hasHistory = fileHistory.length > 0;
 
-  const doneCount = currentPlan.steps.filter(s => s.status === 'done').length;
   const errorCount = currentPlan.steps.filter(s => s.status === 'error').length;
+  const doneCount = currentPlan.steps.filter(s => s.status === 'done').length;
   const total = currentPlan.steps.length;
 
   const toggleSkip = (stepId: string) => {
@@ -101,10 +103,12 @@ const PlanTabPanel = () => {
       agent: 'coder',
       content: `Plan approved! Executing ${stepsToRun.length} step${stepsToRun.length !== 1 ? 's' : ''}...${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}`,
     });
+    addTerminalOutput('▶ Starting plan runner (first step begins after workspace prep)…');
 
     const coderModel = getModelForRole('coder');
 
-    await orchestrator.executePlan(
+    try {
+      await orchestrator.executePlan(
       currentPlan,
       skippedSteps,
       {
@@ -143,6 +147,19 @@ const PlanTabPanel = () => {
       },
       coderModel,
     );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      updatePlanStatus('done');
+      const st = useWorkbenchStore.getState().currentPlan;
+      const stuck = st?.steps.find(s => s.status === 'running' || s.status === 'repairing');
+      if (stuck) updateStepStatus(stuck.id, 'error', msg);
+      addLog(`Plan execution failed: ${msg}`, 'error');
+      addMessage({
+        role: 'assistant',
+        agent: 'coder',
+        content: `**Plan execution stopped** — ${msg.slice(0, 3500)}`,
+      });
+    }
   };
 
   const handleReject = () => {
@@ -201,7 +218,7 @@ const PlanTabPanel = () => {
               <p className="text-[11px] text-muted-foreground mt-1">
                 {total} steps
                 {isPending && skippedSteps.size > 0 && ` · ${skippedSteps.size} skipped`}
-                {isExecuting && ` · running ${doneCount + 1}/${total}`}
+                {isExecuting && ` · ${planExecutionProgressSuffix(currentPlan.steps)}`}
                 {isDone && (errorCount > 0 ? ` · finished with ${errorCount} failed` : ' · complete')}
               </p>
               {(currentPlan.validationCommand || isExecuting) && (

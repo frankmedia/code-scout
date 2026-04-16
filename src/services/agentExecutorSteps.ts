@@ -33,6 +33,9 @@ import { detectDevServerPort, freePortIfOccupied } from './agentExecutorPort';
 /** Max time (ms) to wait for a normal command before considering it timed out. */
 const CMD_TIMEOUT_MS = 120_000;
 
+/** Repo-wide grep/rg/git-grep can walk huge trees — fail faster so the UI returns to the user. */
+const SEARCH_CMD_TIMEOUT_MS = 45_000;
+
 /** For background commands, wait this long to collect initial output then move on. */
 const BACKGROUND_SETTLE_MS = 5_000;
 
@@ -480,12 +483,30 @@ export async function executeRunCommand(
     return;
   }
 
-  // Normal (foreground) command with timeout
+  // Normal (foreground) command with timeout (shorter for plain repo search — avoids “stuck forever” UX)
+  const trimmedCmd = resolvedCommand.trim();
+  const isRepoSearch =
+    /^(?:git\s+grep|grep|rg|ack|ag)\b/i.test(trimmedCmd) &&
+    !/^(npm|yarn|pnpm|bun|cargo|go|python|pip)\b/i.test(trimmedCmd);
+  const cmdTimeoutMs = isRepoSearch ? SEARCH_CMD_TIMEOUT_MS : CMD_TIMEOUT_MS;
+
+  const abortPromise = new Promise<never>((_, reject) => {
+    const s = callbacks.signal;
+    if (!s) return;
+    const fail = () => reject(new DOMException('Plan execution cancelled', 'AbortError'));
+    if (s.aborted) fail();
+    else s.addEventListener('abort', fail, { once: true });
+  });
+
   const result = await Promise.race([
     executeCommand(resolvedCommand, effectivePath),
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Command timed out after ${CMD_TIMEOUT_MS / 1000}s: ${command}`)), CMD_TIMEOUT_MS),
+      setTimeout(
+        () => reject(new Error(`Command timed out after ${cmdTimeoutMs / 1000}s: ${command}`)),
+        cmdTimeoutMs,
+      ),
     ),
+    abortPromise,
   ]);
 
   if (result.stdout) result.stdout.split('\n').filter(Boolean).forEach(l => {

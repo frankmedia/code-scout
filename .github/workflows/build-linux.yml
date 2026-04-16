@@ -1,4 +1,4 @@
-name: Build Linux
+name: Manual CI Draft Build - Linux
 
 on:
   workflow_dispatch:

@@ -121,21 +121,46 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: npm run tauri:icon
 
-      # ── macOS signing ──────────────────────────────────────────────────
-      # `secrets.*` is required here — `env.APPLE_CERTIFICATE` is never set on the job,
-      # so the old condition skipped import while still passing APPLE_SIGNING_IDENTITY
-      # to the build, which breaks codesign (identity not in keychain).
-      # Note: `secrets` must not appear in `if:` (GitHub rejects the workflow → 0 jobs).
+      # ── macOS signing/notarization (strict) ────────────────────────────
+      # Hard-fail release builds when Apple credentials are missing.
+      # This prevents publishing unsigned / non-notarized macOS binaries.
+      - name: Validate required macOS notarization secrets
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for v in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID
+          do
+            if [ -z "${!v:-}" ]; then
+              echo "Missing required secret: $v"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Refusing macOS release build: notarization/signing secrets are incomplete."
+            exit 1
+          fi
+
       - name: Import macOS signing certificate
         if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "No APPLE_CERTIFICATE secret — skipping keychain import (unsigned mac build)."
-            exit 0
-          fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p actions build.keychain
           security default-keychain -s build.keychain
@@ -146,9 +171,7 @@ jobs:
             -s -k actions build.keychain
           rm certificate.p12
 
-      # Do not use `secrets.APPLE_CERTIFICATE != ''` in YAML — it is unreliable.
-      # Only export APPLE_* for Tauri when this runner imported a real cert.
-      - name: Export macOS signing env for Tauri (unsigned if no cert)
+      - name: Export macOS signing env for Tauri
         shell: bash
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
@@ -160,10 +183,6 @@ jobs:
         run: |
           if [ "$MATRIX_PLATFORM" != "macos-latest" ]; then
             exit 0
-          fi
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "ERROR: APPLE_CERTIFICATE secret is not set — refusing to publish an unsigned macOS build."
-            exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"

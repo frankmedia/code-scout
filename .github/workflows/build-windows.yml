@@ -1,6 +1,6 @@
 # Windows-only CI build (Option A) — no Apple secrets, no Tauri updater signing.
-# Trigger: GitHub → Actions → "Build Windows" → Run workflow.
-name: Build Windows
+# Trigger: GitHub → Actions → "Manual CI Draft Build - Windows" → Run workflow.
+name: Manual CI Draft Build - Windows
 
 on:
   workflow_dispatch:

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff, Undo2 } from 'lucide-react';
+import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff, Undo2, Heart } from 'lucide-react';
+import { AgentHeartbeatPopover } from './AgentHeartbeatPopover';
 import { useWorkbenchStore, AppMode, type ChatImagePart } from '@/store/workbenchStore';
 import { useModelStore, PROVIDER_OPTIONS, ModelProvider } from '@/store/modelStore';
 import { useChatHistoryStore } from '@/store/chatHistoryStore';
@@ -635,6 +636,7 @@ const AIPanel = () => {
   const [liveTokPerSec, setLiveTokPerSec] = useState<number | null>(null);
   const streamFirstChunkAtRef = useRef<number>(0);
   const streamCharsReceivedRef = useRef<number>(0);
+  const [heartbeatOpen, setHeartbeatOpen] = useState(false);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [pendingTextFiles, setPendingTextFiles] = useState<PendingTextFile[]>([]);
   const requestStartTime = useRef<number>(0);
@@ -1410,6 +1412,9 @@ const AIPanel = () => {
 
     const streamAbort = beginChatStream();
 
+    // Read user-configured loop limits from the store
+    const loopLimits = useModelStore.getState();
+
     await runAgentToolLoop({
       model: orchestratorModel,
       coderModel: withCoder ? coderModel! : undefined,
@@ -1417,6 +1422,13 @@ const AIPanel = () => {
       initialMessages,
       projectPath,
       signal: streamAbort,
+      maxNoToolRounds: loopLimits.agentMaxNoToolRounds,
+      maxRounds: loopLimits.agentMaxRounds,
+      repetitionNudgeAt: loopLimits.agentRepetitionNudgeAt,
+      repetitionExitAt: loopLimits.agentRepetitionExitAt,
+      maxCoderRounds: loopLimits.agentMaxCoderRounds,
+      maxFileReadChars: loopLimits.agentMaxFileReadChars,
+      backgroundSettleMs: loopLimits.agentBackgroundSettleMs,
       callbacks: {
         onChunk: (chunk) => {
           trackStreamChunk(chunk);
@@ -2128,6 +2140,28 @@ const AIPanel = () => {
               {detectStreamProgress(streamingContent)}
             </span>
           )}
+
+          {/* Heartbeat — agent loop settings popover */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setHeartbeatOpen(o => !o)}
+              title="Agent heartbeat & loop settings"
+              className={`flex items-center justify-center rounded-md border border-border p-1 transition-colors ${
+                heartbeatOpen ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
+              }`}
+            >
+              <Heart className={`h-3.5 w-3.5 ${isThinking ? 'text-red-500 animate-pulse' : ''}`} />
+            </button>
+            {heartbeatOpen && (
+              <AgentHeartbeatPopover
+                onOpenModelSettings={() => {
+                  setHeartbeatOpen(false);
+                  useModelStore.getState().setSettingsOpen(true);
+                }}
+              />
+            )}
+          </div>
 
           <div className="flex-1" />
 

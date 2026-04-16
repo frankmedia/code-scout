@@ -232,188 +232,6 @@ const RoleModelDropdown = ({
   );
 };
 
-// Keep the old ModelDropdown for backward compat — it will no longer be rendered in the toolbar.
-const ModelDropdown = () => {
-  const { models, selectedChatModel, setSelectedChatModel } = useModelStore();
-  const getModelForRole = useModelStore(s => s.getModelForRole);
-  const [open, setOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const modelSearchInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  useEffect(() => {
-    if (open) {
-      setModelSearch('');
-      queueMicrotask(() => modelSearchInputRef.current?.focus());
-    }
-  }, [open]);
-
-  const enabledModels = models.filter(m => m.enabled);
-
-  // Identify the "starred" models so we can badge + sort them
-  const orchestratorModel = getModelForRole('orchestrator');
-  const coderModel = getModelForRole('coder');
-  const ROLE_SORT: Record<string, number> = {};
-  if (orchestratorModel) ROLE_SORT[orchestratorModel.id] = 0;
-  if (coderModel && coderModel.id !== orchestratorModel?.id) ROLE_SORT[coderModel.id] = 1;
-
-  const modelSearchNeedle = modelSearch.trim().toLowerCase();
-  const filteredChatModels = useMemo(() => {
-    const enabled = models.filter(m => m.enabled);
-    const matched = modelSearchNeedle
-      ? enabled.filter(m => {
-          const prov = PROVIDER_OPTIONS.find(p => p.id === m.provider)?.label ?? '';
-          return (
-            m.name.toLowerCase().includes(modelSearchNeedle)
-            || m.modelId.toLowerCase().includes(modelSearchNeedle)
-            || prov.toLowerCase().includes(modelSearchNeedle)
-          );
-        })
-      : enabled;
-    // Sort: orchestrator first, then coder, then the rest alphabetically
-    return [...matched].sort((a, b) => {
-      const ra = ROLE_SORT[a.id] ?? 99;
-      const rb = ROLE_SORT[b.id] ?? 99;
-      if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models, modelSearchNeedle, orchestratorModel?.id, coderModel?.id]);
-
-  // The model that will actually be used right now
-  const effectiveModel = selectedChatModel
-    ? models.find(m => m.id === selectedChatModel)
-    : orchestratorModel;
-
-  const currentModel = effectiveModel;
-  const displayName = currentModel ? currentModel.modelId : 'No model';
-  const currentProvider = currentModel
-    ? PROVIDER_OPTIONS.find(p => p.id === currentModel.provider)
-    : null;
-  const currentRoleLabel = currentModel?.role === 'orchestrator' ? '🧠' : currentModel?.role === 'coder' ? '💻' : null;
-
-  return (
-    <div className="relative shrink-0 w-[min(100%,408px)] max-w-[66vw]" ref={dropdownRef}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full min-h-[40px] rounded-md bg-secondary border border-border px-3 py-2 text-[13px] text-muted-foreground hover:text-foreground transition-colors text-left"
-      >
-        {currentProvider && (
-          <ProviderIcon isLocal={currentProvider.isLocal} className="h-4 w-4 shrink-0" />
-        )}
-        <span className="font-mono truncate min-w-0 flex-1 text-[13px]" title={displayName}>{displayName}</span>
-        {currentRoleLabel && (
-          <span className="text-[11px] shrink-0 opacity-70">{currentRoleLabel}</span>
-        )}
-        <ChevronDown className="h-4 w-4 shrink-0 opacity-70" aria-hidden />
-      </button>
-
-      {open && (
-        <div className="absolute bottom-full left-0 mb-1 w-[504px] bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
-          <div className="px-4 py-3 border-b border-border space-y-2">
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Select Model</p>
-            {enabledModels.length > 0 && (
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <input
-                  ref={modelSearchInputRef}
-                  type="search"
-                  value={modelSearch}
-                  onChange={e => setModelSearch(e.target.value)}
-                  placeholder="Search models…"
-                  className="w-full bg-secondary border border-border rounded-md pl-8 pr-2 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  aria-label="Filter chat models"
-                  onClick={e => e.stopPropagation()}
-                  onKeyDown={e => e.stopPropagation()}
-                />
-              </div>
-            )}
-          </div>
-          <div className="max-h-80 overflow-y-auto py-1">
-            <button
-              onClick={() => { setSelectedChatModel(null); setOpen(false); }}
-              className={`w-full flex items-center gap-2.5 px-4 py-3 text-[13px] hover:bg-surface-hover transition-colors ${
-                !selectedChatModel ? 'bg-primary/10 text-primary' : 'text-foreground'
-              }`}
-            >
-              <span className="text-sm">🔄</span>
-              <div className="flex-1 text-left">
-                <span className="font-medium">Auto</span>
-                <span className="text-muted-foreground ml-1.5 text-[11px]">
-                  {orchestratorModel ? `→ ${orchestratorModel.name}` : 'Uses Orchestrator model'}
-                </span>
-              </div>
-              {!selectedChatModel && <span className="text-primary">✓</span>}
-            </button>
-            <div className="border-t border-border my-1" />
-            {filteredChatModels.map(m => {
-              const provider = PROVIDER_OPTIONS.find(p => p.id === m.provider);
-              const isOrchestrator = m.id === orchestratorModel?.id;
-              const isCoder = m.id === coderModel?.id;
-              const isActive = m.id === effectiveModel?.id;
-              const isManuallySelected = selectedChatModel === m.id;
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => { setSelectedChatModel(m.id); setOpen(false); }}
-                  className={`w-full flex items-center gap-2.5 px-4 py-3 text-[13px] hover:bg-surface-hover transition-colors ${
-                    isManuallySelected
-                      ? 'bg-primary/10 text-primary'
-                      : isActive
-                        ? 'bg-success/8 text-foreground'
-                        : 'text-foreground'
-                  }`}
-                >
-                  {provider
-                    ? <ProviderIcon isLocal={provider.isLocal} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    : <span className="text-sm">·</span>
-                  }
-                  <div className="flex-1 text-left min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="font-medium truncate text-[13px]">{m.name}</span>
-                      {isOrchestrator && (
-                        <span className="shrink-0 px-1 py-0.5 rounded text-[10px] bg-accent/20 text-accent font-medium">🧠 Orchestrator</span>
-                      )}
-                      {isCoder && !isOrchestrator && (
-                        <span className="shrink-0 px-1 py-0.5 rounded text-[10px] bg-primary/15 text-primary font-medium">💻 Coder</span>
-                      )}
-                    </div>
-                    <span className="text-[11px] text-muted-foreground font-mono">
-                      {provider?.label} · {m.modelId}
-                    </span>
-                  </div>
-                  {isManuallySelected
-                    ? <span className="text-primary shrink-0">✓</span>
-                    : isActive
-                      ? <span className="text-success shrink-0 text-[10px] font-medium">active</span>
-                      : null
-                  }
-                </button>
-              );
-            })}
-            {enabledModels.length === 0 && (
-              <p className="px-4 py-3 text-[13px] text-muted-foreground">No models enabled. Configure in Settings.</p>
-            )}
-            {enabledModels.length > 0 && filteredChatModels.length === 0 && modelSearchNeedle && (
-              <p className="px-4 py-3 text-[13px] text-muted-foreground">No models match your search.</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 // ─── Two-box agent model display (Orchestrator + Coder) ─────────────────────
 
@@ -1691,7 +1509,6 @@ const AIPanel = () => {
       return;
     }
 
-    ws.addTerminalOutput('[LOOP] orchestrator evaluating plan results...');
 
     try {
       // Short 15s timeout — if model is unreachable, fail fast instead of hanging
@@ -1714,7 +1531,6 @@ const AIPanel = () => {
         );
       });
 
-      ws.addTerminalOutput(`[LOOP] orchestrator replied: ${result.slice(0, 60)}`);
 
       // Parse: try JSON, then fallback to raw text
       let isDone = true;

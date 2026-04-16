@@ -27,16 +27,27 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           REPO="${{ github.repository }}"
-          # Do not use --verify-tag: it often fails for annotated tags / timing on tag-push workflows.
-          rid="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)"
+          # Use `gh release view` so we always get a numeric databaseId. A bare
+          # `gh api …/releases/tags/… --jq .id` on failure can yield non-numeric
+          # junk into GITHUB_OUTPUT, which breaks tauri-action (Number(releaseId) → NaN).
+          rid=""
+          if out="$(gh release view "$TAG" --repo "$REPO" --json databaseId -q .databaseId 2>/dev/null)"; then
+            rid="$out"
+          fi
           if [ -z "${rid}" ]; then
             gh release create "$TAG" \
               --repo "$REPO" \
               --title "Code Scout ${TAG}" \
               --notes "Multi-platform installers and bundles (CI matrix)." \
               --latest
-            rid="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.id')"
+            rid="$(gh release view "$TAG" --repo "$REPO" --json databaseId -q .databaseId)"
           fi
+          case "$rid" in
+            ''|*[!0-9]*)
+              echo "Invalid release databaseId for tag ${TAG}: [${rid}]"
+              exit 1
+              ;;
+          esac
           echo "release_id=${rid}" >> "$GITHUB_OUTPUT"
           echo "Using release id=${rid} for tag ${TAG}"
 
@@ -134,17 +145,38 @@ jobs:
             -s -k actions build.keychain
           rm certificate.p12
 
+      # Do not use `secrets.APPLE_CERTIFICATE != ''` in YAML — it is unreliable.
+      # Only export APPLE_* for Tauri when this runner imported a real cert.
+      - name: Export macOS signing env for Tauri (unsigned if no cert)
+        shell: bash
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "APPLE_SIGNING_IDENTITY=" >> "$GITHUB_ENV"
+          echo "APPLE_ID=" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=" >> "$GITHUB_ENV"
+          if [ "$MATRIX_PLATFORM" != "macos-latest" ]; then
+            exit 0
+          fi
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            exit 0
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+
       # ── Build ──────────────────────────────────────────────────────────
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Only pass signing/notary/updater keys when the cert bundle exists; otherwise
-          # build unsigned macOS artifacts (still fine for CI / draft testing).
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_TEAM_ID || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:

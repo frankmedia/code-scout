@@ -1,5 +1,5 @@
 {
-  "version": "0.1.5",
-  "url": "https://github.com/frankmedia/code-scout/releases/download/v0.1.5/Code-Scout_0.1.5_aarch64.app.tar.gz",
+  "version": "0.1.7",
+  "url": "https://github.com/frankmedia/code-scout/releases/download/v0.1.7/Code-Scout_0.1.7_aarch64.app.tar.gz",
   "notes": "Website mirror — the desktop app checks GitHub releases/latest (see updater.rs)."
 }

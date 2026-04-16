@@ -1289,8 +1289,7 @@ const AIPanel = () => {
               role: 'assistant',
               agent: 'orchestrator',
               content:
-                `Here is a **${p.steps.length}-step plan**. Review it in the card below.\n\n${stepLines}\n\n` +
-                '> **Nothing runs until you approve** — use **Execute** to run the plan, **Modify** to describe what to change and get a revised plan, or **Reject** to cancel.',
+                `Here is a **${p.steps.length}-step plan**. Review it in the card below.\n\n${stepLines}`,
               showPlanCard: true,
             });
           }

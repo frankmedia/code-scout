@@ -199,18 +199,26 @@ jobs:
           if [ "$MATRIX_PLATFORM" != "macos-latest" ]; then
             exit 0
           fi
+          # Normalize secrets copied from UI (remove CR/LF and surrounding spaces).
+          api_key="$(printf '%s' "${APPLE_API_KEY:-}" | tr -d '\r\n' | xargs)"
+          api_issuer="$(printf '%s' "${APPLE_API_ISSUER:-}" | tr -d '\r\n' | xargs)"
+          api_private_key="$(printf '%s' "${APPLE_API_PRIVATE_KEY:-}" | sed 's/\r$//')"
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
           if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ]; then
             echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
             echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
           fi
-          if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_PRIVATE_KEY:-}" ]; then
-            key_file="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
-            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$key_file"
+          if [ -n "$api_key" ] && [ -n "$api_issuer" ] && [ -n "$api_private_key" ]; then
+            if ! printf '%s' "$api_issuer" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+              echo "APPLE_API_ISSUER is not a valid UUID after normalization: [$api_issuer]"
+              exit 1
+            fi
+            key_file="$RUNNER_TEMP/AuthKey_${api_key}.p8"
+            printf '%s\n' "$api_private_key" > "$key_file"
             chmod 600 "$key_file"
-            echo "APPLE_API_KEY=$APPLE_API_KEY" >> "$GITHUB_ENV"
-            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+            echo "APPLE_API_KEY=$api_key" >> "$GITHUB_ENV"
+            echo "APPLE_API_ISSUER=$api_issuer" >> "$GITHUB_ENV"
             echo "APPLE_API_KEY_PATH=$key_file" >> "$GITHUB_ENV"
           fi
 

@@ -166,6 +166,8 @@ jobs:
             exit 0
           fi
           if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            # Empty identity makes codesign fail on bundled sidecars; `-` is ad-hoc.
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
             exit 0
           fi
           echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"

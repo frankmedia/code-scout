@@ -38,9 +38,13 @@ export function registerPlanCompletionHandler(fn: PlanCompletionHandler | null):
 
 export async function submitPlanCompletion(stepResults: string, originalGoal: string): Promise<void> {
   const fn = completionHandler;
-  console.log('[LOOP-DEBUG] submitPlanCompletion called | handler registered:', !!fn);
+  const msg = `[LOOP] submitPlanCompletion called | handler: ${!!fn}`;
+  console.log(msg);
+  try { (await import('@/store/workbenchStore')).useWorkbenchStore.getState().addLog(msg, 'info'); } catch {}
   if (!fn) {
-    console.warn('[planCompletion] No handler registered (AIPanel not mounted?)');
+    const warn = '[LOOP] No completion handler registered — AIPanel not mounted?';
+    console.warn(warn);
+    try { (await import('@/store/workbenchStore')).useWorkbenchStore.getState().addLog(warn, 'warning'); } catch {}
     return;
   }
   await fn(stepResults, originalGoal);

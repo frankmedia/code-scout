@@ -1838,6 +1838,17 @@ async function executeWebSearch(
     return;
   }
 
+  // Wrap every HTTP call with a hard 30-second timeout so a stalled network
+  // request can never freeze plan execution indefinitely.
+  const HTTP_TIMEOUT_MS = 30_000;
+  const timedFetch = (url: string) =>
+    Promise.race([
+      makeHttpRequest(url),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`HTTP timeout after ${HTTP_TIMEOUT_MS / 1000}s: ${url}`)), HTTP_TIMEOUT_MS),
+      ),
+    ]);
+
   try {
     const encoded = encodeURIComponent(query);
 
@@ -1852,7 +1863,7 @@ async function executeWebSearch(
     for (const searchUrl of endpoints) {
       try {
         callbacks.onLog(`Trying: ${searchUrl}`, 'info');
-        const response = await makeHttpRequest(searchUrl);
+        const response = await timedFetch(searchUrl);
         if (response.status === 200 && response.body.length > 100) {
           results = parseDuckDuckGoResults(response.body);
           if (results.length > 0) {
@@ -1869,7 +1880,7 @@ async function executeWebSearch(
     if (results.length === 0) {
       try {
         const apiUrl = `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`;
-        const apiResp = await makeHttpRequest(apiUrl);
+        const apiResp = await timedFetch(apiUrl);
         if (apiResp.status === 200) {
           const data = JSON.parse(apiResp.body);
           if (data.AbstractText) {
@@ -1955,7 +1966,12 @@ async function executeFetchUrl(
   }
 
   try {
-    const response = await makeHttpRequest(url);
+    const response = await Promise.race([
+      makeHttpRequest(url),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`HTTP timeout after 30s: ${url}`)), 30_000),
+      ),
+    ]);
 
     if (response.status !== 200) {
       callbacks.onLog(`Fetch returned HTTP ${response.status}`, 'warning');

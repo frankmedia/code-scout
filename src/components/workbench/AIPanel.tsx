@@ -1682,13 +1682,14 @@ const AIPanel = () => {
 
   // ── Plan completion evaluation — orchestrator reviews step results ──────────
   const handlePlanCompletion = useCallback(async (stepResults: string, originalGoal: string) => {
-    console.log('[LOOP-DEBUG] handlePlanCompletion called | stepResults length:', stepResults.length, '| goal length:', originalGoal.length);
     const ms = useModelStore.getState();
     const orchModel = ms.getModelForRole('orchestrator');
-    console.log('[LOOP-DEBUG] orchestrator model enabled:', orchModel?.enabled, '| modelId:', orchModel?.modelId);
-    if (!orchModel?.enabled) return; // No orchestrator — nothing to evaluate
-
     const ws = useWorkbenchStore.getState();
+    ws.addLog(`[LOOP] handlePlanCompletion called | results: ${stepResults.length} chars | orch enabled: ${orchModel?.enabled} | model: ${orchModel?.modelId}`, 'info');
+    if (!orchModel?.enabled) {
+      ws.addLog('[LOOP] No orchestrator model enabled — skipping evaluation', 'warning');
+      return;
+    }
     ws.addLog('Orchestrator evaluating plan results...', 'info');
 
     // Ask the orchestrator to evaluate whether the goal is fully met
@@ -1720,7 +1721,7 @@ const AIPanel = () => {
     ];
 
     try {
-      console.log('[LOOP-DEBUG] calling orchestrator callModel for evaluation');
+      ws.addLog('[LOOP] calling orchestrator callModel for evaluation', 'info');
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
         callModel(
@@ -1729,8 +1730,8 @@ const AIPanel = () => {
             maxOutputTokens: 1024,
           }),
           (chunk: string) => { full += chunk; },
-          (finalText: string) => { console.log('[LOOP-DEBUG] orchestrator eval onDone, length:', finalText.length, '| preview:', finalText.slice(0, 100)); resolve(finalText); },
-          (err: Error) => { console.log('[LOOP-DEBUG] orchestrator eval onError:', err.name, err.message); reject(err); },
+          (finalText: string) => { ws.addLog(`[LOOP] orch eval onDone: ${finalText.slice(0, 80)}`, 'success'); resolve(finalText); },
+          (err: Error) => { ws.addLog(`[LOOP] orch eval onError: ${err.name} ${err.message}`, 'error'); reject(err); },
         );
       });
 

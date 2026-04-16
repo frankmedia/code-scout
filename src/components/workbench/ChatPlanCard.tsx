@@ -137,7 +137,7 @@ export function ChatPlanCard() {
           });
         },
         onComplete: () => {
-          console.log('[LOOP-DEBUG] onComplete fired — plan execution done');
+          addLog('[LOOP] onComplete fired — plan execution done', 'success');
           updatePlanStatus('done');
           const planState = useWorkbenchStore.getState().currentPlan;
           const failed = planState?.steps.filter(s => s.status === 'error').length ?? 0;
@@ -174,7 +174,7 @@ export function ChatPlanCard() {
             .find(m => m.role === 'user')?.content ?? '';
 
           const coderM = getModelForRole('coder');
-          console.log('[LOOP-DEBUG] coderM enabled:', coderM?.enabled, '| stepResults length:', stepResults.trim().length);
+          addLog(`[LOOP] coderM enabled: ${coderM?.enabled} | stepResults: ${stepResults.trim().length} chars`, 'info');
           /** Bounded wait so a stuck summary stream cannot leave the chat thread without a reply. */
           const SUMMARY_MS = 120_000;
           if (coderM?.enabled && stepResults.trim()) {
@@ -188,7 +188,7 @@ export function ChatPlanCard() {
               summarySettled = true;
               fn();
             };
-            console.log('[LOOP-DEBUG] calling callModel for coder summary');
+            addLog('[LOOP] calling callModel for coder summary', 'info');
             callModel(
               modelToRequest(coderM, summaryPrompt, {
                 signal: AbortSignal.timeout(SUMMARY_MS),
@@ -196,28 +196,28 @@ export function ChatPlanCard() {
               }),
               () => {},
               (fullText) => {
-                console.log('[LOOP-DEBUG] coder summary onDone, fullText length:', fullText.length);
+                addLog(`[LOOP] coder summary onDone — ${fullText.length} chars`, 'success');
                 settle(() => {
                   addMessage({ role: 'assistant', agent: 'coder', content: fullText.trim() || buildCompletionFallback() });
-                  console.log('[LOOP-DEBUG] calling submitPlanCompletion (after summary)');
+                  addLog('[LOOP] calling submitPlanCompletion (after summary)', 'info');
                   void submitPlanCompletion(stepResults, originalGoal);
                 });
               },
               (err) => {
-                console.log('[LOOP-DEBUG] coder summary onError:', err.name, err.message);
+                addLog(`[LOOP] coder summary onError: ${err.name} ${err.message}`, 'error');
                 settle(() => {
                   const why =
                     err.name === 'TimeoutError' || /aborted|timeout/i.test(err.message)
                       ? `Summary timed out after ${SUMMARY_MS / 1000}s — here are the plan results.`
                       : `Summary could not run (${err.message.slice(0, 200)}) — here are the plan results.`;
                   addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback(why) });
-                  console.log('[LOOP-DEBUG] calling submitPlanCompletion (after summary error)');
+                  addLog('[LOOP] calling submitPlanCompletion (after summary error)', 'info');
                   void submitPlanCompletion(stepResults, originalGoal);
                 });
               },
             );
           } else {
-            console.log('[LOOP-DEBUG] no coder model — calling submitPlanCompletion directly');
+            addLog('[LOOP] no coder model — calling submitPlanCompletion directly', 'info');
             addMessage({ role: 'assistant', agent: 'coder', content: buildCompletionFallback() });
             // Trigger orchestrator evaluation for non-coder path too
             void submitPlanCompletion(stepResults, originalGoal);

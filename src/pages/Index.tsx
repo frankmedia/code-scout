@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import TopBar from '@/components/workbench/TopBar';
 import FileTree from '@/components/workbench/FileTree';
+import TokenPowerGrid from '@/components/workbench/TokenPowerGrid';
 import EditorPanel from '@/components/workbench/EditorPanel';
 import AIPanel from '@/components/workbench/AIPanel';
 import PlanTabPanel from '@/components/workbench/PlanTabPanel';
@@ -245,8 +246,15 @@ const Index = () => {
           onExpand={() => setRightPanelCollapsed(false)}
           className="border-l border-border overflow-hidden"
         >
-          <div className="h-full flex flex-col">
-            <FileTree />
+          <div className="h-full flex flex-col overflow-hidden">
+            {/* Token Power Grid — fixed height at top of right panel */}
+            <div className="shrink-0" style={{ height: '260px' }}>
+              <TokenPowerGrid />
+            </div>
+            {/* File tree — takes remaining space */}
+            <div className="flex-1 min-h-0 overflow-hidden border-t border-border">
+              <FileTree />
+            </div>
           </div>
         </ResizablePanel>
         </ResizablePanelGroup>

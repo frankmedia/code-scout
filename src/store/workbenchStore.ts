@@ -148,6 +148,30 @@ interface WorkbenchState {
   /** Probed environment — set on project open, available to all agents */
   envInfo: EnvironmentInfo | null;
 
+  // Streaming / Token Power Grid stats (written by AIPanel, read by TokenPowerGrid)
+  /** True while the model is actively streaming a response */
+  aiIsStreaming: boolean;
+  /** Live tokens-per-second rate, null when not streaming */
+  aiLiveTokPerSec: number | null;
+  /** Accumulated total tokens consumed this session (across all turns) */
+  aiSessionTotalTokens: number;
+  /** Date.now() timestamp of when the first message was sent in this session */
+  aiSessionStartTime: number | null;
+  /** Estimated current context window usage in tokens */
+  aiContextUsed: number;
+  /** Current context window limit for the active model */
+  aiContextLimit: number;
+  setAiStreamingStats: (patch: {
+    isStreaming?: boolean;
+    liveTokPerSec?: number | null;
+    contextUsed?: number;
+    contextLimit?: number;
+  }) => void;
+  /** Call when a turn completes — adds the turn's token count to the session total */
+  addAiSessionTokens: (tokens: number) => void;
+  /** Called when a new session starts (bumpChatSession) — resets session counters */
+  resetAiSessionStats: () => void;
+
   // Actions
   setEnvInfo: (info: EnvironmentInfo | null) => void;
   setActiveFile: (path: string) => void;
@@ -318,6 +342,30 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   logs: [{ time: new Date().toLocaleTimeString(), message: 'Workbench initialized', type: 'info' }],
   fileHistory: [],
 
+  // Streaming / Token Power Grid stats
+  aiIsStreaming: false,
+  aiLiveTokPerSec: null,
+  aiSessionTotalTokens: 0,
+  aiSessionStartTime: null,
+  aiContextUsed: 0,
+  aiContextLimit: 0,
+  setAiStreamingStats: (patch) => set(s => ({
+    aiIsStreaming: patch.isStreaming ?? s.aiIsStreaming,
+    aiLiveTokPerSec: patch.liveTokPerSec !== undefined ? patch.liveTokPerSec : s.aiLiveTokPerSec,
+    aiContextUsed: patch.contextUsed ?? s.aiContextUsed,
+    aiContextLimit: patch.contextLimit ?? s.aiContextLimit,
+  })),
+  addAiSessionTokens: (tokens) => set(s => ({
+    aiSessionTotalTokens: s.aiSessionTotalTokens + tokens,
+    aiSessionStartTime: s.aiSessionStartTime ?? Date.now(),
+  })),
+  resetAiSessionStats: () => set({
+    aiSessionTotalTokens: 0,
+    aiSessionStartTime: null,
+    aiIsStreaming: false,
+    aiLiveTokPerSec: null,
+  }),
+
   setActiveFile: (path) => set({ activeFile: path }),
   setActiveCenterTab: (tab) => {
     if (tab === 'chat') {
@@ -478,7 +526,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   setMessages: (messages) => set({ messages }),
   bumpChatSession: () => {
     useTaskStore.getState().resetTask();
-    set(s => ({ chatSessionEpoch: s.chatSessionEpoch + 1 }));
+    set(s => ({
+      chatSessionEpoch: s.chatSessionEpoch + 1,
+      aiSessionTotalTokens: 0,
+      aiSessionStartTime: null,
+      aiIsStreaming: false,
+      aiLiveTokPerSec: null,
+    }));
   },
   setProjectName: (name) => set({ projectName: name }),
   setDirHandle: (handle) => set({ dirHandle: handle }),

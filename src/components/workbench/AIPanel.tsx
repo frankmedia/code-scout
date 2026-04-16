@@ -1952,85 +1952,99 @@ const AIPanel = () => {
     <div className="h-full min-h-0 flex flex-col bg-surface-panel px-3.5 sm:px-4">
       {/* Plan tab link removed — plan is now shown inline in chat via ChatPlanCard */}
 
-      <div ref={messagesScrollRef} className="flex-1 overflow-y-auto py-3 space-y-3 min-h-0">
+      <div ref={messagesScrollRef} className="flex-1 overflow-y-auto py-2 space-y-1 min-h-0">
         {messages.map(msg => (
           <div
             key={msg.id}
-            className={msg.role === 'user' ? 'flex justify-end w-full min-w-0' : 'w-full min-w-0'}
+            className={`px-3 py-1.5 ${msg.role === 'user' ? '' : ''}`}
           >
             {msg.role === 'user' ? (
-              <div className="max-w-full w-fit min-w-0 bg-secondary border-2 border-primary/55 rounded-lg px-3.5 py-2.5 text-[12px] text-foreground space-y-2">
-                {msg.images && msg.images.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {msg.images.map((img, i) => (
-                      <img
-                        key={i}
-                        src={`data:${img.mediaType};base64,${img.dataBase64}`}
-                        alt=""
-                        className="max-h-28 rounded border border-primary/40 object-cover"
-                      />
-                    ))}
-                  </div>
-                )}
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+              <div className="flex items-start gap-2">
+                <div className="shrink-0 mt-0.5 h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center">
+                  <span className="text-[9px] font-bold text-primary">U</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                      {msg.images.map((img, i) => (
+                        <img
+                          key={i}
+                          src={`data:${img.mediaType};base64,${img.dataBase64}`}
+                          alt=""
+                          className="max-h-24 rounded border border-border object-cover"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-[12px] text-foreground whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                </div>
               </div>
             ) : (
-              <div className="w-full min-w-0">
-                {msg.agent && (
-                  <AgentLabel agent={msg.agent} />
-                )}
-                <div className="rounded-lg px-3.5 py-2.5 text-[12px] leading-relaxed bg-card text-card-foreground border border-border/40">
-                  <div className="prose prose-invert max-w-none text-[12px] leading-relaxed [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&>blockquote]:border-primary/50 [&>blockquote]:text-muted-foreground [&_code]:font-mono [&_code]:text-[11px]">
-                    <ChatMarkdown content={msg.content} />
-                  </div>
-                  {msg.toolInvocations && msg.toolInvocations.length > 0 && (
-                    <ChatToolInvocations
-                      messageId={msg.id}
-                      invocations={msg.toolInvocations}
-                      onChainMaybeContinue={tryContinueToolChain}
-                    />
+              <div className="flex items-start gap-2">
+                <div className={`shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center ${
+                  msg.agent === 'orchestrator' ? 'bg-accent/15' : 'bg-primary/15'
+                }`}>
+                  {msg.agent === 'orchestrator'
+                    ? <Brain className="h-3 w-3 text-accent" />
+                    : <Terminal className="h-3 w-3 text-primary" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  {msg.agent && (
+                    <span className={`text-[10px] font-medium ${
+                      msg.agent === 'orchestrator' ? 'text-accent' : 'text-primary'
+                    }`}>
+                      {AGENT_META[msg.agent]?.label ?? msg.agent}
+                    </span>
                   )}
-                  {msg.showPlanCard && msg.id === lastPlanCardMsgId && <ChatPlanCard />}
+                  <div className="text-[12px] leading-relaxed text-foreground/90 mt-0.5">
+                    <div className="prose prose-invert max-w-none text-[12px] leading-relaxed [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&>blockquote]:border-primary/50 [&>blockquote]:text-muted-foreground [&_code]:font-mono [&_code]:text-[11px] [&_code]:bg-secondary/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded">
+                      <ChatMarkdown content={msg.content} />
+                    </div>
+                    {msg.toolInvocations && msg.toolInvocations.length > 0 && (
+                      <ChatToolInvocations
+                        messageId={msg.id}
+                        invocations={msg.toolInvocations}
+                        onChainMaybeContinue={tryContinueToolChain}
+                      />
+                    )}
+                    {msg.showPlanCard && msg.id === lastPlanCardMsgId && <ChatPlanCard />}
+                  </div>
                 </div>
               </div>
             )}
           </div>
         ))}
 
-        {/* Streaming content with live progress bar */}
+        {/* Streaming content */}
         {isThinking && streamingContent && (
-          <div className="w-full min-w-0">
-            <AgentLabel agent={(mode === 'agent' || mode === 'build') ? 'coder' : 'orchestrator'} thinking />
-            {/* Live progress status line */}
-            <div className="flex items-center gap-2 mb-1.5 px-1 min-w-0">
-              {(mode === 'agent' || mode === 'build') ? (
-                <Loader2 className="h-3 w-3 text-primary animate-spin shrink-0" />
-              ) : (
-                <Brain className="h-3 w-3 text-accent animate-pulse shrink-0" />
-              )}
-              <span className="text-[11px] text-primary font-medium truncate min-w-0">
-                {detectStreamProgress(streamingContent)}
-                {(liveTurnTokens.in > 0 || liveTurnTokens.out > 0) && (
-                  <span className="text-muted-foreground font-normal">
-                    {' '}
-                    · {formatTokenCount(liveTurnTokens.in)} in / {formatTokenCount(liveTurnTokens.out)} out
+          <div className="px-3 py-1.5">
+            <div className="flex items-start gap-2">
+              <div className={`shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center ${
+                (mode === 'agent' || mode === 'build') ? 'bg-primary/15' : 'bg-accent/15'
+              }`}>
+                {(mode === 'agent' || mode === 'build')
+                  ? <Terminal className="h-3 w-3 text-primary animate-spin" />
+                  : <Brain className="h-3 w-3 text-accent animate-pulse" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className={`text-[10px] font-medium ${
+                    (mode === 'agent' || mode === 'build') ? 'text-primary' : 'text-accent'
+                  }`}>
+                    {(mode === 'agent' || mode === 'build') ? 'Coder' : 'Orchestrator'}
                   </span>
-                )}
-                {liveTokPerSec !== null && (
-                  <span className="text-muted-foreground font-normal">
-                    {' '}· {liveTokPerSec} tok/s
+                  <span className="text-[9px] text-muted-foreground font-mono tabular-nums">
+                    {liveTokPerSec !== null && `${liveTokPerSec} tok/s`}
+                    {thinkingElapsedMs > 600 && ` · ${fmtElapsed(thinkingElapsedMs)}`}
                   </span>
-                )}
-              </span>
-              {thinkingElapsedMs > 600 && (
-                <span className="ml-auto font-mono text-[10px] text-muted-foreground tabular-nums shrink-0">
-                  {fmtElapsed(thinkingElapsedMs)}
-                </span>
-              )}
-            </div>
-            <div className="rounded-lg px-3.5 py-2.5 text-[12px] leading-relaxed bg-card text-card-foreground border border-border/40">
-              <div className="prose prose-invert max-w-none text-[12px] leading-relaxed [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&_code]:font-mono [&_code]:text-[11px]">
-                <ChatMarkdown content={streamingContent} />
+                </div>
+                <div className="text-[12px] leading-relaxed text-foreground/90">
+                  <div className="prose prose-invert max-w-none text-[12px] leading-relaxed [&>p]:m-0 [&>p+p]:mt-2 [&>ul]:mt-1 [&>ol]:mt-1 [&_code]:font-mono [&_code]:text-[11px] [&_code]:bg-secondary/60 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded">
+                    <ChatMarkdown content={streamingContent} />
+                  </div>
+                </div>
+                {/* Typing cursor */}
+                <span className="inline-block w-1.5 h-3.5 bg-primary/70 animate-pulse rounded-sm ml-0.5 -mb-0.5" />
               </div>
             </div>
           </div>
@@ -2041,41 +2055,38 @@ const AIPanel = () => {
           <PlanActivityFeed activities={planActivities} elapsedMs={thinkingElapsedMs} />
         )}
 
-        {/* Generic thinking indicator — chat / build mode (before any content streams) */}
+        {/* Thinking indicator — before any content streams */}
         {isThinking && !streamingContent && planActivities.length === 0 && (
-          <div className="w-full min-w-0">
-            <AgentLabel agent={(mode === 'agent' || mode === 'build') ? 'coder' : 'orchestrator'} thinking />
-            <div className="flex items-center gap-2 bg-card rounded-lg px-3 py-1.5 text-[11px] text-muted-foreground border border-border/40 min-w-0">
-              {(mode === 'agent' || mode === 'build') ? (
-                <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
-              ) : (
-                <Brain className="h-3.5 w-3.5 text-accent animate-pulse shrink-0" />
-              )}
-              <span className="truncate min-w-0">
-                {liveTurnTokens.in > 0 || liveTurnTokens.out > 0 ? (
-                  <>
-                    <span className="text-foreground/90 font-mono tabular-nums">
-                      {formatTokenCount(liveTurnTokens.in)} tok in
-                    </span>
-                    <span className="text-muted-foreground"> · </span>
-                    <span className="text-foreground/90 font-mono tabular-nums">
-                      {formatTokenCount(liveTurnTokens.out)} tok out
-                    </span>
-                    {liveTokPerSec !== null ? (
-                      <span className="text-muted-foreground"> · {liveTokPerSec} tok/s</span>
-                    ) : (
-                      <span className="text-muted-foreground"> · waiting for stream…</span>
-                    )}
-                  </>
-                ) : (
-                  <>Connecting to model…</>
-                )}
-              </span>
-              {thinkingElapsedMs > 600 && (
-                <span className="font-mono text-[10px] text-primary/60 tabular-nums shrink-0 ml-auto">
-                  {fmtElapsed(thinkingElapsedMs)}
+          <div className="px-3 py-1.5">
+            <div className="flex items-start gap-2">
+              <div className={`shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center ${
+                (mode === 'agent' || mode === 'build') ? 'bg-primary/15' : 'bg-accent/15'
+              }`}>
+                {(mode === 'agent' || mode === 'build')
+                  ? <Terminal className="h-3 w-3 text-primary animate-spin" />
+                  : <Brain className="h-3 w-3 text-accent animate-pulse" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className={`text-[10px] font-medium ${
+                  (mode === 'agent' || mode === 'build') ? 'text-primary' : 'text-accent'
+                }`}>
+                  {(mode === 'agent' || mode === 'build') ? 'Coder' : 'Orchestrator'}
                 </span>
-              )}
+                <div className="flex items-center gap-3 mt-1">
+                  {/* Animated thinking dots */}
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+                    {liveTurnTokens.in > 0 || liveTurnTokens.out > 0
+                      ? `${formatTokenCount(liveTurnTokens.out)} tokens`
+                      : 'Thinking…'}
+                    {thinkingElapsedMs > 600 && ` · ${fmtElapsed(thinkingElapsedMs)}`}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2140,28 +2151,6 @@ const AIPanel = () => {
               {detectStreamProgress(streamingContent)}
             </span>
           )}
-
-          {/* Heartbeat — agent loop settings popover */}
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setHeartbeatOpen(o => !o)}
-              title="Agent heartbeat & loop settings"
-              className={`flex items-center justify-center rounded-md border border-border p-1 transition-colors ${
-                heartbeatOpen ? 'bg-primary/15 text-primary border-primary/30' : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-              }`}
-            >
-              <Heart className={`h-3.5 w-3.5 ${isThinking ? 'text-red-500 animate-pulse' : ''}`} />
-            </button>
-            {heartbeatOpen && (
-              <AgentHeartbeatPopover
-                onOpenModelSettings={() => {
-                  setHeartbeatOpen(false);
-                  useModelStore.getState().setSettingsOpen(true);
-                }}
-              />
-            )}
-          </div>
 
           <div className="flex-1" />
 

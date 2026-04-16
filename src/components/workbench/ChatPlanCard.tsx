@@ -136,7 +136,7 @@ export function ChatPlanCard() {
             content: `**Plan stopped** — validation or repair failed.\n\n${reason.slice(0, 3500)}`,
           });
         },
-        onComplete: () => {
+        onAllDone: () => {
           updatePlanStatus('done');
           const planState = useWorkbenchStore.getState().currentPlan;
           const failed = planState?.steps.filter(s => s.status === 'error').length ?? 0;

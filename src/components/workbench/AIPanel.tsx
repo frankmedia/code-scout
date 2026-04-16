@@ -480,7 +480,7 @@ type ActivityItem = { id: string; text: string; done: boolean };
 const ACTIVITY_ICONS: Record<string, string> = {
   'Indexed':    '📂',
   'Connecting': '🔌',
-  'Sending':    '📤',
+  'Sending':    '⬆',
   'Receiving':  '📡',
   'Parsing':     '🔍',
   'Plan ready':  '✅',

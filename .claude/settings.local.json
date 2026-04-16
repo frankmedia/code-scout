@@ -80,7 +80,10 @@
       "Bash(grep -v \"^$\")",
       "Bash(git -C /Users/frank/code-scout add src/components/workbench/ChatPlanCard.tsx src/components/workbench/PlanTabPanel.tsx src/services/agentExecutor.ts src/services/agentExecutorSteps.ts src/services/agentExecutorUtils.ts src/services/validationRunner.ts vite.config.ts src/services/agentExecutor.rmSanitize.test.ts)",
       "Bash(git -C /Users/frank/code-scout commit -m \"feat: agent executor improvements, plan card updates, validation runner\")",
-      "Bash(xargs kill:*)"
+      "Bash(xargs kill:*)",
+      "Bash(git rm:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, Loader2, Brain, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff } from 'lucide-react';
+import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff } from 'lucide-react';
 import { useWorkbenchStore, AppMode, type ChatImagePart } from '@/store/workbenchStore';
 import { useModelStore, PROVIDER_OPTIONS, ModelProvider } from '@/store/modelStore';
 import { useChatHistoryStore } from '@/store/chatHistoryStore';
@@ -76,14 +76,11 @@ const AGENT_META: Record<string, { label: string; color: string }> = {
 
 const AgentLabel = ({ agent, thinking }: { agent: string; thinking?: boolean }) => {
   const meta = AGENT_META[agent] ?? { label: agent, color: 'text-muted-foreground' };
+  const Icon = agent === 'orchestrator' ? Brain : Terminal;
+  const anim = thinking ? (agent === 'orchestrator' ? 'animate-pulse' : 'animate-spin') : '';
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] font-medium mb-1 pl-0.5 ${meta.color}`}>
-      {thinking && agent === 'orchestrator' && (
-        <Brain className="h-2.5 w-2.5 animate-pulse shrink-0" aria-hidden />
-      )}
-      {thinking && agent !== 'orchestrator' && (
-        <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" aria-hidden />
-      )}
+      <Icon className={`h-2.5 w-2.5 shrink-0 ${anim}`} aria-hidden />
       {meta.label}
     </span>
   );
@@ -1508,9 +1505,11 @@ const AIPanel = () => {
       return;
     }
 
+    // Show thinking indicator while orchestrator evaluates
+    setIsThinking(true);
 
     try {
-      // Short 15s timeout — if model is unreachable, fail fast instead of hanging
+      // Short timeout — if model is unreachable, fail fast instead of hanging
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
         callModel(
@@ -1558,17 +1557,18 @@ const AIPanel = () => {
           content: `More work needed:\n\n${followUp}\n\nGenerating follow-up plan...`,
         });
         setPlanActivities([]);
-        setIsThinking(true);
         requestStartTime.current = Date.now();
         await runPlanningWithUserGoalRef.current(
           `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, 4000)}\n\nAdditional work needed:\n${followUp}`,
         );
         saveCurrentChat(useWorkbenchStore.getState().messages);
       } else {
+        setIsThinking(false);
         ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: summary || 'Task completed.' });
       }
     } catch {
       // Model unreachable / timeout — just mark done, don't hang
+      setIsThinking(false);
       ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: 'Task completed.' });
     }
   }, [setIsThinking, saveCurrentChat, setPlanActivities]);

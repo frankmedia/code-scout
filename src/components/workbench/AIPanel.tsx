@@ -1533,11 +1533,21 @@ const AIPanel = () => {
       return;
     }
 
-    // Show thinking indicator while orchestrator evaluates
+    // Clear stale activities and show thinking indicator
+    setPlanActivities([]);
     setIsThinking(true);
+    setStreamingContent('');
+
+    // Post a visible "evaluating" message so the user knows what's happening
+    const evalMsgId = crypto.randomUUID();
+    ws.addMessage({
+      id: evalMsgId,
+      role: 'assistant',
+      agent: 'orchestrator',
+      content: '⏳ Evaluating plan results…',
+    });
 
     try {
-      // Short timeout — if model is unreachable, fail fast instead of hanging
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
         callModel(
@@ -1556,6 +1566,9 @@ const AIPanel = () => {
           (err: Error) => reject(err),
         );
       });
+
+      // Remove the "evaluating" placeholder
+      ws.removeMessage(evalMsgId);
 
 
       // Parse: try JSON, then fallback to raw text
@@ -1595,11 +1608,12 @@ const AIPanel = () => {
         ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: summary || 'Task completed.' });
       }
     } catch {
-      // Model unreachable / timeout — just mark done, don't hang
+      // Model unreachable / timeout — remove placeholder, just mark done
+      ws.removeMessage(evalMsgId);
       setIsThinking(false);
       ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: 'Task completed.' });
     }
-  }, [setIsThinking, saveCurrentChat, setPlanActivities]);
+  }, [setIsThinking, saveCurrentChat, setPlanActivities, setStreamingContent]);
 
   useEffect(() => {
     registerPlanCompletionHandler(handlePlanCompletion);

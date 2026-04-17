@@ -1367,10 +1367,12 @@ const AIPanel = () => {
               '"do we still use Y?", "find references to Z"), you MUST use PLAN so grep/search',
               'commands can check the FULL codebase. Never guess from a partial file tree.',
               '',
-              'Use DIRECT ONLY for: general coding advice, architecture recommendations,',
-              'explaining concepts, questions about technologies (not this specific codebase).',
-              'Use PLAN for: ANY question about what exists in this codebase, file modifications,',
-              '"is X used?", "find X", "create/fix/add", running commands, searching code.',
+              'Use DIRECT for: general coding advice, architecture recommendations,',
+              'explaining concepts, questions about technologies,',
+              'OR if the AGENT MEMORY below already contains the answer from a previous search.',
+              'Use PLAN for: questions about what exists in this codebase WHEN no memory covers it,',
+              'file modifications, "create/fix/add", running commands, searching code.',
+              'If you have memory of a previous plan that already answered this exact question, use DIRECT.',
               memory?.repoMap ? `\nProject: ${memory.repoMap.framework} / ${memory.repoMap.primaryLanguage}` : '',
               skeleton ? `\nFile tree:\n${skeleton}` : '',
               memoryPrompt ? `\n${memoryPrompt}` : '',
@@ -1686,6 +1688,24 @@ const AIPanel = () => {
         setIsThinking(false);
         ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: summary || 'Task completed.' });
       }
+
+      // Save plan results + orchestrator conclusion to agent memory
+      // so future conversations remember what was found
+      try {
+        const projName = ws.projectName;
+        const conclusion = isDone ? (summary || 'Task completed.') : `Follow-up needed: ${followUp}`;
+        useAgentMemoryStore.getState().addMemory({
+          projectName: projName,
+          category: 'plan_result',
+          title: `Plan: ${originalGoal.slice(0, 80)}`,
+          content: [
+            `Question: ${originalGoal}`,
+            `Result: ${conclusion}`,
+            stepResults.slice(0, 3000),
+          ].join('\n\n'),
+          tags: ['plan_result'],
+        });
+      } catch { /* non-fatal */ }
     } catch {
       // Model unreachable / timeout — remove placeholder, just mark done
       ws.removeMessage(evalMsgId);

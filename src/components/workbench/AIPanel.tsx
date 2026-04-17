@@ -1651,13 +1651,13 @@ const AIPanel = () => {
           modelToRequest(orchModel, [
             {
               role: 'system',
-              content: 'You are evaluating whether a plan achieved the user\'s goal. Reply with JSON: { "done": true, "summary": "..." } or { "done": false, "followUp": "..." }. If you cannot use JSON, just write your answer as plain text.',
+              content: 'You are evaluating whether a plan achieved the user\'s goal. Reply with JSON: { "done": true, "summary": "..." } or { "done": false, "followUp": "..." }. Keep the summary concise (2-3 sentences max). If you cannot use JSON, just write your answer as plain text.',
             },
             {
               role: 'user',
               content: `Goal:\n${originalGoal}\n\nResults:\n${stepResults.slice(0, 8000)}`,
             },
-          ], { signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs), maxOutputTokens: 512 }),
+          ], { signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs), maxOutputTokens: 2048 }),
           (chunk: string) => { full += chunk; },
           (finalText: string) => resolve(finalText || full),
           (err: Error) => reject(err),
@@ -1668,24 +1668,38 @@ const AIPanel = () => {
       ws.removeMessage(evalMsgId);
 
 
-      // Parse: try JSON, then fallback to raw text
+      // Parse: try JSON first, then extract from truncated JSON, then raw text
       let isDone = true;
-      let summary = result.trim();
+      let summary = '';
       let followUp = '';
 
+      // 1. Try strict JSON parse
       try {
-        const m = result.match(/\{[\s\S]*?\}/);
+        const m = result.match(/\{[\s\S]*\}/);
         if (m) {
           const p = JSON.parse(m[0]);
-          if (p.done === false) { isDone = false; followUp = p.followUp || result; }
-          else { summary = p.summary || result; }
+          if (p.done === false) { isDone = false; followUp = p.followUp || ''; }
+          else { summary = p.summary || ''; }
         }
-      } catch { /* use raw text */ }
+      } catch {
+        // 2. JSON truncated — extract summary/followUp with regex
+        const sumMatch = result.match(/"summary"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|$)/);
+        const fuMatch = result.match(/"followUp"\s*:\s*"([\s\S]*?)(?:"\s*[,}]|$)/);
+        const doneMatch = result.match(/"done"\s*:\s*(true|false)/);
+        if (doneMatch) isDone = doneMatch[1] === 'true';
+        if (sumMatch) summary = sumMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        if (fuMatch) { followUp = fuMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'); isDone = false; }
+      }
+
+      // 3. If still empty, strip JSON wrapper and use raw text
+      if (!summary && !followUp) {
+        summary = result.replace(/^\s*\{[\s\S]*$/, '').trim() || result.trim();
+      }
 
       // Keyword fallback
-      if (isDone && /\b(not complete|not done|incomplete|more work|follow.?up needed)\b/i.test(result)) {
+      if (isDone && /\b(not complete|not done|incomplete|more work|follow.?up needed)\b/i.test(summary || result)) {
         isDone = false;
-        followUp = result;
+        followUp = followUp || summary;
       }
 
       if (!isDone && followUp) {

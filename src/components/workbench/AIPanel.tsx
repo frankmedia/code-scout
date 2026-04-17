@@ -1614,6 +1614,22 @@ const AIPanel = () => {
       return;
     }
 
+    // Save plan results to agent memory FIRST — before orchestrator evaluation
+    // which may time out. This ensures we always remember what was found.
+    try {
+      const projName = ws.projectName;
+      useAgentMemoryStore.getState().addMemory({
+        projectName: projName,
+        category: 'plan_result',
+        title: `Plan: ${originalGoal.slice(0, 80)}`,
+        content: [
+          `Question: ${originalGoal}`,
+          `Step results:\n${stepResults.slice(0, 3000)}`,
+        ].join('\n\n'),
+        tags: ['plan_result'],
+      });
+    } catch { /* non-fatal */ }
+
     // Clear stale activities and show thinking indicator
     setPlanActivities([]);
     setIsThinking(true);
@@ -1689,23 +1705,6 @@ const AIPanel = () => {
         ws.addMessage({ role: 'assistant', agent: 'orchestrator', content: summary || 'Task completed.' });
       }
 
-      // Save plan results + orchestrator conclusion to agent memory
-      // so future conversations remember what was found
-      try {
-        const projName = ws.projectName;
-        const conclusion = isDone ? (summary || 'Task completed.') : `Follow-up needed: ${followUp}`;
-        useAgentMemoryStore.getState().addMemory({
-          projectName: projName,
-          category: 'plan_result',
-          title: `Plan: ${originalGoal.slice(0, 80)}`,
-          content: [
-            `Question: ${originalGoal}`,
-            `Result: ${conclusion}`,
-            stepResults.slice(0, 3000),
-          ].join('\n\n'),
-          tags: ['plan_result'],
-        });
-      } catch { /* non-fatal */ }
     } catch {
       // Model unreachable / timeout — remove placeholder, just mark done
       ws.removeMessage(evalMsgId);

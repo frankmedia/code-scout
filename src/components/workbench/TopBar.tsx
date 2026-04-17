@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Cpu, Settings, Brain, Code, TestTube, Loader2, Github, Palette, FlaskConical, Heart } from 'lucide-react';
+import { Cpu, Brain, Code, TestTube, Loader2, Github, Palette, FlaskConical, Heart } from 'lucide-react';
 import { useTheme, type Theme } from '@/hooks/useTheme';
 import { useModelStore } from '@/store/modelStore';
 import { useTaskStore } from '@/store/taskStore';
@@ -255,12 +255,6 @@ const TopBar = () => {
           )}
         </div>
 
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
-        >
-          <Settings className="h-4 w-4" />
-        </button>
       </div>
 
       {/* GitHub sync dropdown panel */}

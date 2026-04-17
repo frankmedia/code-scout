@@ -342,11 +342,11 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   logs: [{ time: new Date().toLocaleTimeString(), message: 'Workbench initialized', type: 'info' }],
   fileHistory: [],
 
-  // Streaming / Token Power Grid stats
+  // Streaming / Token Power Grid stats (restored from localStorage)
   aiIsStreaming: false,
   aiLiveTokPerSec: null,
-  aiSessionTotalTokens: 0,
-  aiSessionStartTime: null,
+  aiSessionTotalTokens: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').total ?? 0; } catch { return 0; } })(),
+  aiSessionStartTime: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').start ?? null; } catch { return null; } })(),
   aiContextUsed: 0,
   aiContextLimit: 0,
   setAiStreamingStats: (patch) => set(s => ({
@@ -355,16 +355,21 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     aiContextUsed: patch.contextUsed ?? s.aiContextUsed,
     aiContextLimit: patch.contextLimit ?? s.aiContextLimit,
   })),
-  addAiSessionTokens: (tokens) => set(s => ({
-    aiSessionTotalTokens: s.aiSessionTotalTokens + tokens,
-    aiSessionStartTime: s.aiSessionStartTime ?? Date.now(),
-  })),
-  resetAiSessionStats: () => set({
-    aiSessionTotalTokens: 0,
-    aiSessionStartTime: null,
-    aiIsStreaming: false,
-    aiLiveTokPerSec: null,
+  addAiSessionTokens: (tokens) => set(s => {
+    const newTotal = s.aiSessionTotalTokens + tokens;
+    const startTime = s.aiSessionStartTime ?? Date.now();
+    try { localStorage.setItem('scout-token-stats', JSON.stringify({ total: newTotal, start: startTime })); } catch {}
+    return { aiSessionTotalTokens: newTotal, aiSessionStartTime: startTime };
   }),
+  resetAiSessionStats: () => {
+    try { localStorage.removeItem('scout-token-stats'); } catch {}
+    return set({
+      aiSessionTotalTokens: 0,
+      aiSessionStartTime: null,
+      aiIsStreaming: false,
+      aiLiveTokPerSec: null,
+    });
+  },
 
   setActiveFile: (path) => set({ activeFile: path }),
   setActiveCenterTab: (tab) => {

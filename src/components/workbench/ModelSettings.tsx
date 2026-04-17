@@ -442,58 +442,60 @@ const ModelCard = ({ model, onEdit }: { model: ModelConfig; onEdit: (model: Mode
 
 // ─── Advanced Settings ───────────────────────────────────────────────────────
 
+const AdvancedRow = ({ label, hint, value, onChange, unit, min, max }: {
+  label: string; hint: string; value: number; onChange: (v: number) => void;
+  unit: string; min: number; max: number;
+}) => (
+  <div className="flex items-center justify-between gap-3">
+    <div className="min-w-0">
+      <p className="text-[11px] font-medium text-foreground">{label}</p>
+      <p className="text-[10px] text-muted-foreground">{hint}</p>
+    </div>
+    <div className="flex items-center gap-1.5 shrink-0">
+      <input type="number" min={min} max={max} value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-16 rounded border border-border bg-background px-2 py-1 text-xs text-foreground text-right"
+      />
+      <span className="text-[10px] text-muted-foreground w-8">{unit}</span>
+    </div>
+  </div>
+);
+
 const AdvancedSettings = () => {
   const orchTimeout = useModelStore(s => s.orchestratorTimeoutMs);
   const setOrchTimeout = useModelStore(s => s.setOrchestratorTimeout);
   const httpTimeout = useModelStore(s => s.httpTimeoutMs);
   const setHttpTimeout = useModelStore(s => s.setHttpTimeout);
+  const stepOut = useModelStore(s => s.stepOutputMaxChars);
+  const setStepOut = useModelStore(s => s.setStepOutputMaxChars);
+  const memMax = useModelStore(s => s.memoryMaxChars);
+  const setMemMax = useModelStore(s => s.setMemoryMaxChars);
+  const evalCtx = useModelStore(s => s.evalContextMaxChars);
+  const setEvalCtx = useModelStore(s => s.setEvalContextMaxChars);
 
   return (
     <div className="space-y-5">
       <div>
         <h3 className="text-xs font-semibold text-foreground mb-3">Timeouts</h3>
         <div className="space-y-3">
-          {/* Orchestrator evaluation timeout */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium text-foreground">Orchestrator evaluation</p>
-              <p className="text-[10px] text-muted-foreground">
-                How long to wait for the orchestrator to evaluate plan results before marking as complete.
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <input
-                type="number"
-                min={5}
-                max={300}
-                value={Math.round(orchTimeout / 1000)}
-                onChange={e => setOrchTimeout(Number(e.target.value) * 1000)}
-                className="w-16 rounded border border-border bg-background px-2 py-1 text-xs text-foreground text-right"
-              />
-              <span className="text-[10px] text-muted-foreground">sec</span>
-            </div>
-          </div>
-
-          {/* HTTP request timeout */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium text-foreground">Web search / fetch</p>
-              <p className="text-[10px] text-muted-foreground">
-                Max time per HTTP request during web search and URL fetch plan steps.
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <input
-                type="number"
-                min={5}
-                max={300}
-                value={Math.round(httpTimeout / 1000)}
-                onChange={e => setHttpTimeout(Number(e.target.value) * 1000)}
-                className="w-16 rounded border border-border bg-background px-2 py-1 text-xs text-foreground text-right"
-              />
-              <span className="text-[10px] text-muted-foreground">sec</span>
-            </div>
-          </div>
+          <AdvancedRow label="Orchestrator evaluation" hint="Max wait for orchestrator to evaluate plan results."
+            value={Math.round(orchTimeout / 1000)} onChange={v => setOrchTimeout(v * 1000)} unit="sec" min={5} max={300} />
+          <AdvancedRow label="Web search / fetch" hint="Max time per HTTP request during plan steps."
+            value={Math.round(httpTimeout / 1000)} onChange={v => setHttpTimeout(v * 1000)} unit="sec" min={5} max={300} />
+        </div>
+      </div>
+      <div>
+        <h3 className="text-xs font-semibold text-foreground mb-3">Context limits</h3>
+        <p className="text-[10px] text-muted-foreground mb-3">
+          Control how much data is sent to models and saved to memory. Higher = better answers but more tokens.
+        </p>
+        <div className="space-y-3">
+          <AdvancedRow label="Step output" hint="Max chars per step output (grep results, command output)."
+            value={stepOut} onChange={setStepOut} unit="chars" min={1000} max={50000} />
+          <AdvancedRow label="Memory save" hint="Max chars saved to agent memory per plan result."
+            value={memMax} onChange={setMemMax} unit="chars" min={1000} max={50000} />
+          <AdvancedRow label="Evaluation context" hint="Max chars of results sent to orchestrator for evaluation."
+            value={evalCtx} onChange={setEvalCtx} unit="chars" min={1000} max={50000} />
         </div>
       </div>
     </div>

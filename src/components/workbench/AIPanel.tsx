@@ -1624,7 +1624,7 @@ const AIPanel = () => {
         title: `Plan: ${originalGoal.slice(0, 80)}`,
         content: [
           `Question: ${originalGoal}`,
-          `Step results:\n${stepResults.slice(0, 8000)}`,
+          `Step results:\n${stepResults.slice(0, useModelStore.getState().memoryMaxChars)}`,
         ].join('\n\n'),
         tags: ['plan_result'],
       });
@@ -1655,7 +1655,7 @@ const AIPanel = () => {
             },
             {
               role: 'user',
-              content: `Goal:\n${originalGoal}\n\nResults:\n${stepResults.slice(0, 8000)}`,
+              content: `Goal:\n${originalGoal}\n\nResults:\n${stepResults.slice(0, useModelStore.getState().evalContextMaxChars)}`,
             },
           ], { signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs), maxOutputTokens: 2048 }),
           (chunk: string) => { full += chunk; },
@@ -1711,7 +1711,7 @@ const AIPanel = () => {
         setPlanActivities([]);
         requestStartTime.current = Date.now();
         await runPlanningWithUserGoalRef.current(
-          `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, 8000)}\n\nAdditional work needed:\n${followUp}`,
+          `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, useModelStore.getState().evalContextMaxChars)}\n\nAdditional work needed:\n${followUp}`,
         );
         saveCurrentChat(useWorkbenchStore.getState().messages);
       } else {

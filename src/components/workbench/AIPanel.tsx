@@ -1624,7 +1624,7 @@ const AIPanel = () => {
         title: `Plan: ${originalGoal.slice(0, 80)}`,
         content: [
           `Question: ${originalGoal}`,
-          `Step results:\n${stepResults.slice(0, 3000)}`,
+          `Step results:\n${stepResults.slice(0, 8000)}`,
         ].join('\n\n'),
         tags: ['plan_result'],
       });
@@ -1711,7 +1711,7 @@ const AIPanel = () => {
         setPlanActivities([]);
         requestStartTime.current = Date.now();
         await runPlanningWithUserGoalRef.current(
-          `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, 4000)}\n\nAdditional work needed:\n${followUp}`,
+          `${originalGoal}\n\n---\nPrevious results:\n${stepResults.slice(0, 8000)}\n\nAdditional work needed:\n${followUp}`,
         );
         saveCurrentChat(useWorkbenchStore.getState().messages);
       } else {

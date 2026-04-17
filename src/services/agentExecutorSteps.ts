@@ -40,7 +40,7 @@ const SEARCH_CMD_TIMEOUT_MS = 45_000;
 const BACKGROUND_SETTLE_MS = 5_000;
 
 /** Known CLI tools — if the command starts with one of these, it's a real shell command. */
-export const KNOWN_CLI_TOOLS = /^(npm|npx|node|pnpm|yarn|bun|cargo|pip|pip3|python|python3|git|curl|wget|make|cmake|mkdir|rm|rmdir|mv|cp|cat|ls|cd|echo|find|grep|rg|chmod|chown|brew|apt|apt-get|yum|dnf|pacman|rustc|rustup|go|java|javac|mvn|gradle|docker|kubectl|terraform|ssh|scp|tar|unzip|zip|sed|awk|sort|head|tail|wc|diff|touch|ln|open|pbcopy|xdg-open|code|subl|vim|nano|less|more|env|export|source|which|whereis|type|man|sudo|su|deno|tsc|tsx|jest|vitest|eslint|prettier)\b/;
+export const KNOWN_CLI_TOOLS = /^(npm|npx|node|pnpm|yarn|bun|cargo|pip|pip3|python|python3|php|ruby|perl|bash|sh|zsh|git|curl|wget|make|cmake|mkdir|rm|rmdir|mv|cp|cat|ls|cd|echo|find|grep|rg|chmod|chown|brew|apt|apt-get|yum|dnf|pacman|rustc|rustup|go|java|javac|mvn|gradle|docker|kubectl|terraform|ssh|scp|tar|unzip|zip|sed|awk|sort|head|tail|wc|diff|touch|ln|open|pbcopy|xdg-open|code|subl|vim|nano|less|more|env|export|source|which|whereis|type|man|sudo|su|deno|tsc|tsx|jest|vitest|eslint|prettier|dotnet|swift|gcc|g\+\+|clang|composer|artisan|rails|bundle|rake|mix|elixir|lua|sqlite3|mysql|psql|mongosh|redis-cli)\b/;
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 

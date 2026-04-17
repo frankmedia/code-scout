@@ -627,6 +627,8 @@ const AIPanel = () => {
   const { saveCurrentChat } = useChatHistoryStore();
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
+  /** Which agent is currently active — used for thinking/streaming labels */
+  const [activeAgent, setActiveAgent] = useState<'orchestrator' | 'coder'>('orchestrator');
   const [streamingContent, setStreamingContent] = useState('');
   const [streamError, setStreamError] = useState<string | null>(null);
   const [planActivities, setPlanActivities] = useState<ActivityItem[]>([]);
@@ -1171,8 +1173,7 @@ const AIPanel = () => {
     requestStartTime.current = Date.now();
 
     if (prep.flow === 'chat_orchestrator') {
-      // Use the multi-round agent tool loop when both orchestrator and coder models
-      // are configured and a project path is open; otherwise fall back to single-shot chat.
+      setActiveAgent('orchestrator');
       const ms = useModelStore.getState();
       const hasCoderModel = !!(ms.getModelForRole('coder')?.enabled);
       const hasProjectPath = !!useWorkbenchStore.getState().projectPath;
@@ -1182,8 +1183,10 @@ const AIPanel = () => {
         await handleChatResponse(prep.userMsg, 'orchestrator');
       }
     } else if (prep.flow === 'chat_coder') {
+      setActiveAgent('coder');
       await handleChatResponse(prep.userMsg, 'coder');
     } else {
+      setActiveAgent('orchestrator');
       await handlePlanGeneration(prep.userMsg);
     }
 
@@ -2156,18 +2159,18 @@ const AIPanel = () => {
           <div className="px-3 py-1.5">
             <div className="flex items-start gap-2">
               <div className={`shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center ${
-                (mode === 'agent' || mode === 'build') ? 'bg-primary/15' : 'bg-accent/15'
+                activeAgent === 'coder' ? 'bg-primary/15' : 'bg-accent/15'
               }`}>
-                {(mode === 'agent' || mode === 'build')
+                {activeAgent === 'coder'
                   ? <Terminal className="h-3 w-3 text-primary animate-spin" />
                   : <Brain className="h-3 w-3 text-accent animate-pulse" />}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className={`text-[10px] font-medium ${
-                    (mode === 'agent' || mode === 'build') ? 'text-primary' : 'text-accent'
+                    activeAgent === 'coder' ? 'text-primary' : 'text-accent'
                   }`}>
-                    {(mode === 'agent' || mode === 'build') ? 'Coder' : 'Orchestrator'}
+                    {activeAgent === 'coder' ? 'Coder' : 'Orchestrator'}
                   </span>
                   <span className="text-[9px] text-muted-foreground font-mono tabular-nums">
                     {liveTokPerSec !== null && `${liveTokPerSec} tok/s`}
@@ -2196,17 +2199,17 @@ const AIPanel = () => {
           <div className="px-3 py-1.5">
             <div className="flex items-start gap-2">
               <div className={`shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center ${
-                (mode === 'agent' || mode === 'build') ? 'bg-primary/15' : 'bg-accent/15'
+                activeAgent === 'coder' ? 'bg-primary/15' : 'bg-accent/15'
               }`}>
-                {(mode === 'agent' || mode === 'build')
+                {activeAgent === 'coder'
                   ? <Terminal className="h-3 w-3 text-primary animate-spin" />
                   : <Brain className="h-3 w-3 text-accent animate-pulse" />}
               </div>
               <div className="min-w-0 flex-1">
                 <span className={`text-[10px] font-medium ${
-                  (mode === 'agent' || mode === 'build') ? 'text-primary' : 'text-accent'
+                  activeAgent === 'coder' ? 'text-primary' : 'text-accent'
                 }`}>
-                  {(mode === 'agent' || mode === 'build') ? 'Coder' : 'Orchestrator'}
+                  {activeAgent === 'coder' ? 'Coder' : 'Orchestrator'}
                 </span>
                 <div className="flex items-center gap-3 mt-1">
                   {/* Animated thinking dots */}

@@ -145,7 +145,7 @@ export function ChatPlanCard() {
           // Build step results — always posted immediately, no model call needed
           const stepResults = (planState?.steps ?? []).map((s, i) => {
             let result = `Step ${i + 1}: ${s.description} — ${s.status}`;
-            if (s.fullOutput?.trim()) result += `\nOutput:\n${s.fullOutput.trim().slice(0, 6000)}`;
+            if (s.fullOutput?.trim()) result += `\nOutput:\n${s.fullOutput.trim().slice(0, useModelStore.getState().stepOutputMaxChars)}`;
             if (s.errorMessage) result += `\nError: ${s.errorMessage}`;
             return result;
           }).join('\n\n');

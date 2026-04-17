@@ -91,6 +91,15 @@ interface ModelStoreState {
   /** Timeout (ms) for web search / fetch HTTP requests during plan execution. Default 30000. */
   httpTimeoutMs: number;
   setHttpTimeout: (ms: number) => void;
+  /** Max chars per step output sent to orchestrator. Default 6000. */
+  stepOutputMaxChars: number;
+  setStepOutputMaxChars: (n: number) => void;
+  /** Max chars saved to agent memory per plan result. Default 8000. */
+  memoryMaxChars: number;
+  setMemoryMaxChars: (n: number) => void;
+  /** Max chars of step results sent to orchestrator evaluation. Default 8000. */
+  evalContextMaxChars: number;
+  setEvalContextMaxChars: (n: number) => void;
 
   // ── Agent heartbeat & loop limits ──────────────────────────────────────────
   agentHeartbeatIntervalMs: number;
@@ -184,6 +193,12 @@ export const useModelStore = create<ModelStoreState>()(
       setOrchestratorTimeout: (ms: number) => set({ orchestratorTimeoutMs: Math.max(5000, ms) }),
       httpTimeoutMs: 30_000,
       setHttpTimeout: (ms: number) => set({ httpTimeoutMs: Math.max(5000, ms) }),
+      stepOutputMaxChars: 6_000,
+      setStepOutputMaxChars: (n: number) => set({ stepOutputMaxChars: Math.max(1000, n) }),
+      memoryMaxChars: 8_000,
+      setMemoryMaxChars: (n: number) => set({ memoryMaxChars: Math.max(1000, n) }),
+      evalContextMaxChars: 8_000,
+      setEvalContextMaxChars: (n: number) => set({ evalContextMaxChars: Math.max(1000, n) }),
 
       // ── Agent heartbeat & loop limits ────────────────────────────────────
       agentHeartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
@@ -392,6 +407,9 @@ export const useModelStore = create<ModelStoreState>()(
         providerApiKeys: state.providerApiKeys,
         orchestratorTimeoutMs: state.orchestratorTimeoutMs,
         httpTimeoutMs: state.httpTimeoutMs,
+        stepOutputMaxChars: state.stepOutputMaxChars,
+        memoryMaxChars: state.memoryMaxChars,
+        evalContextMaxChars: state.evalContextMaxChars,
         agentHeartbeatIntervalMs: state.agentHeartbeatIntervalMs,
         agentStallWarningAfterMs: state.agentStallWarningAfterMs,
         agentMaxNoToolRounds: state.agentMaxNoToolRounds,

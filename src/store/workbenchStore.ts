@@ -182,7 +182,9 @@ interface WorkbenchState {
   openPlanTab: () => void;
   closePlanTab: () => void;
   setMode: (mode: AppMode) => void;
-  addMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
+  addMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'> & { id?: string }) => void;
+  /** Remove a message by id (e.g. replace a placeholder). */
+  removeMessage: (id: string) => void;
   /** Deep-merge a message by id (e.g. update tool invocation status). */
   updateMessage: (id: string, fn: (prev: ChatMessage) => ChatMessage) => void;
   setCurrentPlan: (plan: Plan | null) => void;
@@ -419,7 +421,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   },
   setMode: (mode) => { localStorage.setItem('scout-mode', mode); set({ mode }); },
   addMessage: (msg) => set(s => ({
-    messages: [...s.messages, { ...msg, id: crypto.randomUUID(), timestamp: Date.now() }]
+    messages: [...s.messages, { ...msg, id: msg.id ?? crypto.randomUUID(), timestamp: Date.now() }]
+  })),
+  removeMessage: (id) => set(s => ({
+    messages: s.messages.filter(m => m.id !== id),
   })),
   updateMessage: (id, fn) =>
     set(s => ({

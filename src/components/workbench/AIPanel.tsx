@@ -617,6 +617,7 @@ const AIPanel = () => {
     bumpChatSession,
     fileHistory,
     rollbackAll,
+    removeMessage,
   } = store;
   const setAiStreamingStats = useWorkbenchStore(s => s.setAiStreamingStats);
   const addAiSessionTokens = useWorkbenchStore(s => s.addAiSessionTokens);
@@ -2048,8 +2049,18 @@ const AIPanel = () => {
         {messages.map(msg => (
           <div
             key={msg.id}
-            className={`px-3 py-1.5 ${msg.role === 'user' ? '' : ''}`}
+            className={`group/msg relative px-3 py-1.5 hover:bg-muted/30 transition-colors ${msg.role === 'user' ? '' : ''}`}
           >
+            {/* Delete button — appears on hover */}
+            <button
+              type="button"
+              onClick={() => removeMessage(msg.id)}
+              className="absolute right-2 top-1 opacity-0 group-hover/msg:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
+              title="Remove message"
+            >
+              <X className="h-3 w-3" />
+            </button>
+
             {msg.role === 'user' ? (
               <div className="flex items-start gap-2">
                 <div className="shrink-0 mt-0.5 h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center">

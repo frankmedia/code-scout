@@ -1337,6 +1337,78 @@ const AIPanel = () => {
   };
 
   const handlePlanGeneration = async (userMsg: string) => {
+    // ── Triage: ask the orchestrator if it can answer directly ────────────
+    // Avoids unnecessary plan+coder cycles for questions the orchestrator
+    // can answer from project context, memory, or general knowledge.
+    const orchModel = getActiveModel('orchestrator');
+    if (orchModel?.enabled) {
+      try {
+        const ws = useWorkbenchStore.getState();
+        const memory = useProjectMemoryStore.getState().getMemory(ws.projectName);
+        const skeleton = ws.files.length
+          ? getBudgetedSkeletonText(ws.files, ws.projectName, 3000)
+          : '';
+        const memoryPrompt = useAgentMemoryStore.getState().buildMemoryPrompt(ws.projectName, 1000) || '';
+
+        const triagePrompt: ModelRequestMessage[] = [
+          {
+            role: 'system',
+            content: [
+              'You are triaging a user request for a coding IDE.',
+              'Decide if you can answer the question DIRECTLY from context (file tree, project info, general knowledge),',
+              'or if it requires creating/editing files or running commands (which needs a plan).',
+              '',
+              'Reply with EXACTLY one of:',
+              'DIRECT: <your full answer to the user>',
+              'PLAN: <reason why a plan is needed>',
+              '',
+              'Use DIRECT for: questions about the project, code explanations, "is X still used?", architecture questions, recommendations, etc.',
+              'Use PLAN for: "create a component", "fix this bug", "add a feature", "run tests", "install X", file modifications.',
+              memory?.repoMap ? `\nProject: ${memory.repoMap.framework} / ${memory.repoMap.primaryLanguage}` : '',
+              skeleton ? `\nFile tree:\n${skeleton}` : '',
+              memoryPrompt ? `\n${memoryPrompt}` : '',
+            ].filter(Boolean).join('\n'),
+          },
+          { role: 'user', content: userMsg },
+        ];
+
+        const triageResult = await new Promise<string>((resolve, reject) => {
+          let full = '';
+          callModel(
+            modelToRequest(orchModel, triagePrompt, {
+              signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs),
+              maxOutputTokens: 2048,
+            }),
+            (chunk) => {
+              full += chunk;
+              // Stream the response live if it's a direct answer
+              if (/^DIRECT[:\s]/i.test(full)) {
+                const answer = full.replace(/^DIRECT[:\s]+/i, '');
+                setStreamingContent(answer);
+              }
+            },
+            (finalText) => resolve(finalText || full),
+            (err) => reject(err),
+          );
+        });
+
+        // Check if the model chose to answer directly
+        const directMatch = triageResult.match(/^DIRECT[:\s]+([\s\S]+)/i);
+        if (directMatch) {
+          setStreamingContent('');
+          setIsThinking(false);
+          addMessage({ role: 'assistant', agent: 'orchestrator', content: directMatch[1].trim() });
+          return;
+        }
+
+        // Model chose PLAN — fall through to normal planning
+        setStreamingContent('');
+      } catch {
+        // Triage failed — fall through to normal planning
+        setStreamingContent('');
+      }
+    }
+
     await runPlanningWithUserGoalRef.current(userMsg);
   };
 

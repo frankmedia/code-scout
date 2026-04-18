@@ -448,9 +448,9 @@ export function generatePlan(options: GeneratePlanOptions): Promise<Plan> {
       { role: 'user',   content: userContent  },
     ];
 
-    // Rough prompt size estimate for the activity feed
-    const promptChars = typeof systemPrompt === 'string' ? systemPrompt.length : 0;
-    const promptTokenEst = Math.round(promptChars / 4);
+    // Rough prompt size estimate for the activity feed — count ALL messages, not just system
+    const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+    const promptTokenEst = Math.round(totalChars / 4);
     onStatus?.(`Sending · ~${promptTokenEst.toLocaleString()} token prompt`);
 
     let fullResponse = '';

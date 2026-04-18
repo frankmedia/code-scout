@@ -267,8 +267,8 @@ const Index = () => {
             <div className="shrink-0">
               <TokenPowerGrid />
             </div>
-            {/* File tree — takes remaining space */}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            {/* File tree — takes remaining space, scrollable */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
               <FileTree />
             </div>
           </div>

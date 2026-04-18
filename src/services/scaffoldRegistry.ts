@@ -184,7 +184,8 @@ const ARCHETYPES: ScaffoldArchetype[] = [
       { ecosystem: 'npm', name: '@types/react', dev: true },
       { ecosystem: 'npm', name: '@types/react-dom', dev: true },
       { ecosystem: 'npm', name: 'tailwindcss', dev: true },
-      { ecosystem: 'npm', name: '@tailwindcss/vite', dev: true },
+      { ecosystem: 'npm', name: 'postcss', dev: true },
+      { ecosystem: 'npm', name: 'autoprefixer', dev: true },
     ],
     files: [
       {
@@ -206,8 +207,9 @@ const ARCHETYPES: ScaffoldArchetype[] = [
   "devDependencies": {
     "@types/react": "{{PKG:npm:@types/react}}",
     "@types/react-dom": "{{PKG:npm:@types/react-dom}}",
-    "@tailwindcss/vite": "{{PKG:npm:@tailwindcss/vite}}",
     "@vitejs/plugin-react": "{{PKG:npm:@vitejs/plugin-react}}",
+    "autoprefixer": "{{PKG:npm:autoprefixer}}",
+    "postcss": "{{PKG:npm:postcss}}",
     "tailwindcss": "{{PKG:npm:tailwindcss}}",
     "typescript": "{{PKG:npm:typescript}}",
     "vite": "{{PKG:npm:vite}}"
@@ -233,11 +235,28 @@ const ARCHETYPES: ScaffoldArchetype[] = [
         path: 'vite.config.ts',
         content: `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
 });`,
+      },
+      {
+        path: 'postcss.config.js',
+        content: `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};`,
+      },
+      {
+        path: 'tailwind.config.js',
+        content: `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  theme: { extend: {} },
+  plugins: [],
+};`,
       },
       {
         path: 'tsconfig.json',
@@ -264,7 +283,9 @@ export default defineConfig({
       },
       {
         path: 'src/index.css',
-        content: `@import "tailwindcss";`,
+        content: `@tailwind base;
+@tailwind components;
+@tailwind utilities;`,
       },
       {
         path: 'src/main.tsx',
@@ -311,8 +332,8 @@ createRoot(document.getElementById("root")!).render(
       { ecosystem: 'npm', name: '@types/react', dev: true },
       { ecosystem: 'npm', name: '@types/react-dom', dev: true },
       { ecosystem: 'npm', name: 'tailwindcss', dev: true },
-      { ecosystem: 'npm', name: '@tailwindcss/postcss', dev: true },
       { ecosystem: 'npm', name: 'postcss', dev: true },
+      { ecosystem: 'npm', name: 'autoprefixer', dev: true },
     ],
     files: [
       {
@@ -333,10 +354,10 @@ createRoot(document.getElementById("root")!).render(
     "react-dom": "{{PKG:npm:react-dom}}"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "{{PKG:npm:@tailwindcss/postcss}}",
     "@types/node": "{{PKG:npm:@types/node}}",
     "@types/react": "{{PKG:npm:@types/react}}",
     "@types/react-dom": "{{PKG:npm:@types/react-dom}}",
+    "autoprefixer": "{{PKG:npm:autoprefixer}}",
     "postcss": "{{PKG:npm:postcss}}",
     "tailwindcss": "{{PKG:npm:tailwindcss}}",
     "typescript": "{{PKG:npm:typescript}}"
@@ -345,9 +366,11 @@ createRoot(document.getElementById("root")!).render(
       },
       {
         path: 'postcss.config.mjs',
-        content: `const config = {
+        content: `/** @type {import('postcss-load-config').Config} */
+const config = {
   plugins: {
-    "@tailwindcss/postcss": {},
+    tailwindcss: {},
+    autoprefixer: {},
   },
 };
 export default config;`,
@@ -377,8 +400,27 @@ export default config;`,
 }`,
       },
       {
+        path: 'tailwind.config.ts',
+        content: `import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+export default config;`,
+      },
+      {
         path: 'src/app/globals.css',
-        content: `@import "tailwindcss";`,
+        content: `@tailwind base;
+@tailwind components;
+@tailwind utilities;`,
       },
       {
         path: 'src/app/layout.tsx',
@@ -505,7 +547,9 @@ export default defineConfig({
       },
       {
         path: 'src/style.css',
-        content: `@import "tailwindcss";`,
+        content: `@tailwind base;
+@tailwind components;
+@tailwind utilities;`,
       },
       {
         path: 'src/main.ts',

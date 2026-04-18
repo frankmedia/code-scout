@@ -97,27 +97,27 @@ const SessionSidebar = () => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-surface-panel overflow-hidden">
+    <div className="h-full flex flex-col bg-secondary/30 overflow-hidden">
       {/* Header */}
-      <div className="px-3 py-2.5 border-b border-border shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider truncate max-w-[120px]" title={activeProject?.name}>
+      <div className="px-3 py-3 border-b border-border/50 shrink-0">
+        <div className="flex items-center justify-between mb-2.5">
+          <p className="text-[12px] font-semibold text-foreground truncate" title={activeProject?.name}>
             {activeProject?.name || 'Sessions'}
           </p>
           <button
             onClick={closeProject}
             title="Back to projects"
-            className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors shrink-0"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
         </div>
         <button
           onClick={handleNewChat}
-          className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-surface-hover transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary hover:bg-primary/15 transition-colors font-medium"
         >
           <Plus className="h-3.5 w-3.5" />
-          New Agent
+          New chat
         </button>
       </div>
 
@@ -135,10 +135,10 @@ const SessionSidebar = () => {
               <div
                 key={chat.id}
                 onClick={() => handleLoadChat(chat.id)}
-                className={`group relative flex flex-col px-3 py-2 cursor-pointer transition-colors border-l-2 ${
+                className={`group relative flex flex-col px-3 py-2.5 cursor-pointer transition-colors rounded-lg mx-1.5 mb-0.5 ${
                   isActive
-                    ? 'bg-primary/10 border-l-primary'
-                    : 'border-l-transparent hover:bg-surface-hover'
+                    ? 'bg-primary/10'
+                    : 'hover:bg-muted/50'
                 }`}
               >
                 {editingId === chat.id ? (

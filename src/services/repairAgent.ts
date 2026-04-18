@@ -281,22 +281,52 @@ export function requestRepairFix(input: RepairAgentInput): Promise<RepairFix | n
     ? `\nUSER HINT (the user has reviewed the situation and suggests): ${userHint}\nFollow this hint — it takes priority over your own analysis.\n`
     : '';
 
-  const user = `Attempt ${attempt} of ${maxAttempts} (each attempt must be narrower than broad rewrites).${ledgerBlock}${previousAttemptsBlock}${hintBlock}${memoryBlock}${researchBlock}
+  // Include tsconfig paths and full component file tree so the model
+  // understands how imports resolve (critical for Module not found errors)
+  let tsconfigPaths = '';
+  let componentTree = '';
+  try {
+    const ws = useWorkbenchStore.getState();
+    const tsconfig = ws.getFileContent('tsconfig.json') ?? ws.getFileContent('src/tsconfig.json');
+    if (tsconfig) {
+      const pathsMatch = tsconfig.match(/"paths"\s*:\s*\{[^}]+\}/s);
+      if (pathsMatch) tsconfigPaths = `\nTSCONFIG PATHS (how @ imports resolve):\n${pathsMatch[0]}\n`;
+    }
+    // List all component files so the model knows what actually exists
+    const allFiles: string[] = [];
+    const walk = (nodes: typeof ws.files) => {
+      for (const n of nodes) {
+        if (n.type === 'file' && /\.(tsx?|jsx?)$/.test(n.name)) allFiles.push(n.path);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(ws.files);
+    const componentFiles = allFiles.filter(f => /component/i.test(f) || /^(src\/)?components\//.test(f));
+    if (componentFiles.length > 0) {
+      componentTree = `\nCOMPONENT FILES (these are the ACTUAL files that exist):\n${componentFiles.join('\n')}\n`;
+    }
+  } catch { /* non-fatal */ }
+
+  const user = `Attempt ${attempt} of ${maxAttempts} (each attempt must be narrower than broad rewrites).${ledgerBlock}${previousAttemptsBlock}${hintBlock}${memoryBlock}${researchBlock}${tsconfigPaths}${componentTree}
 Failed step: ${step.action}
 Description: ${step.description}
 ${step.path ? `Path: ${step.path}` : ''}
 ${step.command ? `Command: ${step.command}` : ''}
 
-Validation output:
-${failure.slice(0, 6000)}
+FULL validation output (ALL errors, not just the first):
+${failure.slice(0, 8000)}
 
 ${projectFileHints?.trim()
-  ? `PROJECT_FILES (paths that exist — edit only these unless run_command is clearly needed):\n${projectFileHints.slice(0, 4000)}`
+  ? `PROJECT_FILES (config files that exist):\n${projectFileHints.slice(0, 4000)}`
   : ''}
 
 ${fileExcerpt
   ? `File excerpt (${fileExcerpt.path}, first 8000 chars):\n${fileExcerpt.content.slice(0, 8000)}`
   : 'No file excerpt — use run_command if the fix is installing packages or running codegen.'}
+
+IMPORTANT: If there are multiple "Module not found" errors, fix ALL of them in one step.
+If the error is about import paths, check TSCONFIG PATHS above to understand how @/ resolves.
+If a component file exists but the import path is wrong, fix the import — don't create duplicates.
 
 Return ONLY the JSON object for one fix.`;
 

@@ -178,7 +178,7 @@ const TokenPowerGrid: React.FC = () => {
 
       {/* ── Expanded content ─────────────────────────────────────────────── */}
       {!collapsed && (
-        <div className="flex flex-col gap-2 px-3 pb-3">
+        <div className="flex flex-col gap-2.5 px-3 pb-3">
 
           {/* Big token counter */}
           <div className="flex flex-col items-center gap-0.5 py-1">
@@ -194,36 +194,8 @@ const TokenPowerGrid: React.FC = () => {
               {fmt(aiSessionTotal)}
             </div>
             <span className="text-[9px] font-mono tracking-[0.15em] uppercase text-muted-foreground">
-              tokens this session
+              total tokens
             </span>
-          </div>
-
-          {/* Contribution grid */}
-          <div className="flex flex-col gap-[2px] px-0.5">
-            {grid.map((row, ri) => (
-              <div key={ri} className="flex gap-[2px]">
-                {row.map((level, ci) => {
-                  const isBlinking = aiIsStreaming && ci === streamingCol && ri === ROWS - 1;
-                  return (
-                    <div
-                      key={ci}
-                      className={`${LEVEL_CLASSES[level]} ${isBlinking ? 'tpg-blink' : ''}`}
-                      title={
-                        ci < samples.length
-                          ? `Turn ${ci + 1}: ${samples[ci].tokens.toLocaleString()} tokens`
-                          : undefined
-                      }
-                      style={{
-                        flex: 1,
-                        aspectRatio: '1 / 1',
-                        borderRadius: '2px',
-                        transition: 'background 0.4s ease',
-                      }}
-                    />
-                  );
-                })}
-              </div>
-            ))}
           </div>
 
           {/* Context window bar */}
@@ -288,15 +260,6 @@ const TokenPowerGrid: React.FC = () => {
                 </span>
               </div>
             ))}
-          </div>
-
-          {/* Footer legend */}
-          <div className="flex items-center justify-end gap-1 px-0.5">
-            <span className="text-[8px] font-mono text-muted-foreground">less</span>
-            {LEVEL_CLASSES.map((cls, i) => (
-              <div key={i} className={`w-[9px] h-[9px] rounded-sm ${cls}`} />
-            ))}
-            <span className="text-[8px] font-mono text-muted-foreground">more</span>
           </div>
         </div>
       )}

@@ -5,8 +5,10 @@ import { isTauri } from '@/lib/tauri';
 import {
   indexProject,
   readIndexFromDisk,
+  readAgentMemoryFromDisk,
   resolveEffectiveRoot,
 } from '@/services/memoryManager';
+import { useAgentMemoryStore } from '@/store/agentMemoryStore';
 import {
   probeEnvironment,
   readOrReprobeEnvironment,
@@ -118,6 +120,14 @@ async function triggerProjectIndex(
     const diskIndex = await readIndexFromDisk(effectiveRoot);
     const codescoutPresentOnDisk =
       diskIndex !== null && typeof diskIndex === 'object';
+
+    // Load agent memory from .codescout/memory.json — always, regardless of index staleness
+    readAgentMemoryFromDisk(effectiveRoot).then(disk => {
+      if (disk?.length) {
+        useAgentMemoryStore.getState().mergeMemoriesFromDisk(disk);
+        console.log(`[sync] loaded ${disk.length} agent memories from .codescout/memory.json`);
+      }
+    }).catch(() => { /* non-fatal */ });
 
     if (codescoutPresentOnDisk && !isStale) return;
 

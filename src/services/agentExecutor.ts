@@ -797,9 +797,11 @@ export async function executePlan(
               attempt++;
               validation = await runPostStepValidation(plan, { stepId: step.id, result: 'pass', summary: '', observedFacts: [], likelyCauses: [], recommendedAction: 'continue' }, false);
               const orchAttempt: RepairAttempt = {
+                timestamp: new Date().toISOString(),
                 strategyId: 'orchestrator-replan',
                 strategyFamily: 'orchestrator_replan',
                 command: newSteps.map(s => s.description).join('; '),
+                packageManager: repairContext.packageManager,
                 result: validation.pass ? 'success' : 'failed',
                 errorSnippet: validation.pass ? undefined : formatValidationFailure(validation).slice(0, 500),
                 fingerprint,

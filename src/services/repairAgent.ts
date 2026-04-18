@@ -87,10 +87,15 @@ Generate 1–3 replacement steps with a completely different strategy.`;
       { role: 'user', content: user },
     ];
     let full = '';
+    let gotTokens = false;
     callModel(
       modelToRequest(model, messages, signal ? { signal } : undefined),
       (chunk) => { full += chunk; },
       (text) => {
+        if (!gotTokens) {
+          const est = Math.ceil(user.length / 4) + Math.ceil((text || full).length / 4);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+        }
         try {
           const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
           const raw = (fence ? fence[1] : text).trim();
@@ -98,7 +103,6 @@ Generate 1–3 replacement steps with a completely different strategy.`;
           if (!arrMatch) { resolve([]); return; }
           const arr = JSON.parse(arrMatch[0]) as OrchestratorReplanStep[];
           if (!Array.isArray(arr)) { resolve([]); return; }
-          // Validate each step has at minimum action + description
           const valid = arr.filter(s =>
             s && typeof s.action === 'string' && typeof s.description === 'string',
           ).slice(0, 3);
@@ -109,6 +113,7 @@ Generate 1–3 replacement steps with a completely different strategy.`;
       },
       () => resolve([]),
       (usage) => {
+        gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
         if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
       },
@@ -301,10 +306,15 @@ Return ONLY the JSON object for one fix.`;
       { role: 'user', content: user },
     ];
     let full = '';
+    let gotTokens = false;
     callModel(
       modelToRequest(model, messages, signal ? { signal } : undefined),
       (chunk) => { full += chunk; },
       (text) => {
+        if (!gotTokens) {
+          const est = Math.ceil(user.length / 4) + Math.ceil((text || full).length / 4);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+        }
         const jsonStr = extractJSON(text);
         if (!jsonStr) {
           resolve(null);
@@ -344,6 +354,7 @@ Return ONLY the JSON object for one fix.`;
       },
       () => resolve(null),
       (usage) => {
+        gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
         if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
       },

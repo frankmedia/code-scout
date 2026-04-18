@@ -481,6 +481,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }`,
       },
+      {
+        path: 'next.config.mjs',
+        content: `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  turbopack: {},
+};
+
+export default nextConfig;`,
+      },
+      {
+        path: '.gitignore',
+        content: `node_modules
+.next
+out
+dist
+.env
+.env.local`,
+      },
     ],
   },
 

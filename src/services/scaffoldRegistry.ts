@@ -149,7 +149,38 @@ async function resolveVersions(packages: PackageRef[]): Promise<Map<string, stri
   const entries = await Promise.all(
     packages.map(async p => [cacheKey(p.ecosystem, p.name), await resolveOne(p.ecosystem, p.name)] as const),
   );
+  // Validate: warn about suspicious versions (0.0.0, latest, or missing)
+  for (const [key, version] of entries) {
+    if (version === 'latest' || version === '^0.0.0' || version === '0.0.0') {
+      console.warn(`[scaffold] Package ${key} resolved to "${version}" — may not exist on registry`);
+    }
+  }
   return new Map(entries);
+}
+
+/**
+ * Validate all scaffold archetypes by resolving every package version.
+ * Logs warnings for packages that can't be found or resolve to suspicious versions.
+ * Call on startup to catch stale/broken archetypes early.
+ */
+export async function validateScaffoldArchetypes(): Promise<{ ok: boolean; warnings: string[] }> {
+  const warnings: string[] = [];
+  for (const arch of ARCHETYPES) {
+    for (const pkg of arch.packages) {
+      try {
+        const version = await resolveOne(pkg.ecosystem, pkg.name);
+        if (version === 'latest' || /^(\^)?0\.0\.0$/.test(version)) {
+          warnings.push(`[${arch.id}] ${pkg.ecosystem}:${pkg.name} → "${version}" (may not exist)`);
+        }
+      } catch {
+        warnings.push(`[${arch.id}] ${pkg.ecosystem}:${pkg.name} → resolution failed`);
+      }
+    }
+  }
+  if (warnings.length > 0) {
+    console.warn(`[scaffold] ${warnings.length} package warning(s):\n${warnings.join('\n')}`);
+  }
+  return { ok: warnings.length === 0, warnings };
 }
 
 // ─── Template substitution ────────────────────────────────────────────────────

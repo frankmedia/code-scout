@@ -155,11 +155,16 @@ Respond with ONLY valid JSON:
   return new Promise((resolve) => {
     const messages: ModelRequestMessage[] = [{ role: 'user', content: prompt }];
     let fullText = '';
+    let gotTokens = false;
 
     callModel(
       modelToRequest(model, messages),
       (chunk) => { fullText += chunk; },
       (text) => {
+        if (!gotTokens) {
+          const est = Math.ceil(prompt.length / 4) + Math.ceil((text || fullText).length / 4);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+        }
         try {
           const match = text.match(/\{[\s\S]*\}/);
           if (match) {
@@ -195,6 +200,7 @@ Respond with ONLY valid JSON:
         recommendedAction: 'continue',
       }),
       (usage) => {
+        gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
         if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
       },

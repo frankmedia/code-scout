@@ -828,16 +828,17 @@ const AIPanel = () => {
   }, [activeCenterTab]);
 
   const applyTokenUsage = useCallback((usage: TokenUsage) => {
-    if (!isThinkingRef.current) return;
     const inn = usage.inputTokens ?? 0;
     const out = usage.outputTokens ?? 0;
     if (inn <= 0 && out <= 0) return;
+    // Always count toward session total — even if isThinking is already false
+    const total = inn + out;
+    if (total > 0) queueMicrotask(() => addAiSessionTokens(total));
+    // Update live display only while thinking
+    if (!isThinkingRef.current) return;
     setLiveTurnTokens(prev => {
       const newIn = Math.max(prev.in, inn);
       const newOut = Math.max(prev.out, out);
-      // Defer the store update to avoid setState-during-render warning
-      const outDelta = newOut - prev.out;
-      if (outDelta > 0) queueMicrotask(() => addAiSessionTokens(outDelta));
       return { in: newIn, out: newOut };
     });
   }, [addAiSessionTokens]);
@@ -1386,6 +1387,7 @@ const AIPanel = () => {
 
         const triageResult = await new Promise<string>((resolve, reject) => {
           let full = '';
+          let gotTokens = false;
           callModel(
             modelToRequest(orchModel, triagePrompt, {
               signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs),
@@ -1393,17 +1395,23 @@ const AIPanel = () => {
             }),
             (chunk) => {
               full += chunk;
-              // Stream the response live if it's a direct answer
               if (/^DIRECT[:\s]/i.test(full)) {
                 const answer = full.replace(/^DIRECT[:\s]+/i, '');
                 setStreamingContent(answer);
               }
             },
-            (finalText) => resolve(finalText || full),
+            (finalText) => {
+              if (!gotTokens) {
+                const est = Math.ceil(userMsg.length / 4) + Math.ceil((finalText || full).length / 4);
+                if (est > 0) addAiSessionTokens(est);
+              }
+              resolve(finalText || full);
+            },
             (err) => reject(err),
             (usage) => {
+              gotTokens = true;
               const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-              if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+              if (total > 0) addAiSessionTokens(total);
             },
           );
         });
@@ -1654,6 +1662,7 @@ const AIPanel = () => {
     try {
       const result = await new Promise<string>((resolve, reject) => {
         let full = '';
+        let gotTokens = false;
         callModel(
           modelToRequest(orchModel, [
             {
@@ -1666,11 +1675,18 @@ const AIPanel = () => {
             },
           ], { signal: AbortSignal.timeout(useModelStore.getState().orchestratorTimeoutMs), maxOutputTokens: 2048 }),
           (chunk: string) => { full += chunk; },
-          (finalText: string) => resolve(finalText || full),
+          (finalText: string) => {
+            if (!gotTokens) {
+              const est = Math.ceil(stepResults.length / 4) + Math.ceil((finalText || full).length / 4);
+              if (est > 0) addAiSessionTokens(est);
+            }
+            resolve(finalText || full);
+          },
           (err: Error) => reject(err),
           (usage) => {
+            gotTokens = true;
             const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-            if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+            if (total > 0) addAiSessionTokens(total);
           },
         );
       });

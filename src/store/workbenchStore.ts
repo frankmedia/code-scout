@@ -538,8 +538,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     useTaskStore.getState().resetTask();
     set(s => ({
       chatSessionEpoch: s.chatSessionEpoch + 1,
-      aiSessionTotalTokens: 0,
-      aiSessionStartTime: null,
+      // Keep token totals across sessions — they accumulate over the project lifetime
       aiIsStreaming: false,
       aiLiveTokPerSec: null,
     }));

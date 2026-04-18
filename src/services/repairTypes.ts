@@ -138,7 +138,8 @@ export type RepairAction =
   | { kind: 'escalate_to_llm'; context: string; strategyFamily: StrategyFamily }
   | { kind: 'escalate_to_user'; context: string }
   | { kind: 'escalate_to_search'; query: string }
-  | { kind: 'run_pm_reassessment'; reason: string };
+  | { kind: 'run_pm_reassessment'; reason: string }
+  | { kind: 'escalate_to_orchestrator'; context: string; strategyFamily: 'orchestrator_replan' };
 
 /** Canonical empty fingerprint for passing validations. */
 export function noneFingerprint(): FailureFingerprint {

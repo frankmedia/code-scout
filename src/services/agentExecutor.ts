@@ -52,6 +52,7 @@ import {
   setScaffoldHint,
   resetAgentState,
   getProjectContext,
+  getEnvInfo,
   getWebResearchContext,
   getWebResearchContextLength,
   addWebResearchContext,
@@ -736,6 +737,83 @@ export async function executePlan(
           bumpBudget(ledger, 5);
           callbacks.onLog(`Auto-continue after escalation trigger (attempt ${attempt})`, 'warning');
           continue;
+        }
+
+        case 'escalate_to_orchestrator': {
+          // Coder model failed 3+ times — escalate to orchestrator for a
+          // comprehensive replan. Collects ALL errors and generates new steps.
+          callbacks.onLog('Coder stuck — escalating to orchestrator for a new strategy', 'warning');
+          callbacks.onTerminal('⚙ Escalating to orchestrator for comprehensive fix...');
+
+          const orchModel = useModelStore.getState().getModelForRole('orchestrator');
+          if (!orchModel?.enabled) {
+            callbacks.onLog('No orchestrator model available — cannot escalate', 'error');
+            break;
+          }
+
+          // Collect full error context
+          const allErrors = formatValidationFailure(validation);
+          const projectFiles = flattenAllFilesCapped(
+            useWorkbenchStore.getState().files,
+            (m) => callbacks.onLog(m, 'warning'),
+          ).map(f => f.path).join('\n');
+
+          try {
+            const { requestOrchestratorReplanning } = await import('./repairAgent');
+            const newSteps = await requestOrchestratorReplanning({
+              step,
+              attemptCount: attempt,
+              errorSummary: allErrors.slice(0, 4000),
+              attemptHistory: ledger.attempts.map(a =>
+                `[${a.strategyId}] ${a.command?.slice(0, 100) ?? 'edit'} → ${a.result}: ${a.errorSnippet?.slice(0, 150) ?? 'ok'}`,
+              ),
+              model: orchModel,
+              signal: callbacks.signal,
+              projectFileHints: projectFiles.slice(0, 5000),
+              envInfo: getEnvInfo(),
+            });
+
+            if (newSteps.length > 0) {
+              callbacks.onLog(`Orchestrator proposed ${newSteps.length} fix step(s)`, 'success');
+              // Execute each orchestrator-proposed step
+              for (const replanStep of newSteps) {
+                const fixStep: PlanStep = {
+                  id: crypto.randomUUID(),
+                  action: replanStep.action,
+                  description: replanStep.description,
+                  status: 'pending',
+                  path: replanStep.path,
+                  command: replanStep.command,
+                };
+                callbacks.onLog(`Orchestrator fix: ${fixStep.description}`, 'info');
+                callbacks.onTerminal(`> Orchestrator fix: ${fixStep.description}`);
+                try {
+                  await executeStepAction(fixStep, coderModel, callbacks);
+                } catch (e) {
+                  callbacks.onLog(`Orchestrator fix failed: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+                }
+              }
+              // Re-validate after all orchestrator fixes applied
+              attempt++;
+              validation = await runPostStepValidation(plan, { stepId: step.id, result: 'pass', summary: '', observedFacts: [], likelyCauses: [], recommendedAction: 'continue' }, false);
+              const orchAttempt: RepairAttempt = {
+                strategyId: 'orchestrator-replan',
+                strategyFamily: 'orchestrator_replan',
+                command: newSteps.map(s => s.description).join('; '),
+                result: validation.pass ? 'success' : 'failed',
+                errorSnippet: validation.pass ? undefined : formatValidationFailure(validation).slice(0, 500),
+                fingerprint,
+                progressScore: validation.pass ? 1 : 0,
+              };
+              recordAttempt(ledger, orchAttempt);
+              callbacks.onRepairDone?.(step, attempt, validation.pass);
+              continue;
+            }
+            callbacks.onLog('Orchestrator returned no alternative steps', 'warning');
+          } catch (e) {
+            callbacks.onLog(`Orchestrator escalation failed: ${e instanceof Error ? e.message : String(e)}`, 'error');
+          }
+          break;
         }
       }
 

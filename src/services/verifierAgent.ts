@@ -1,4 +1,4 @@
-import { PlanStep } from '@/store/workbenchStore';
+import { PlanStep, useWorkbenchStore } from '@/store/workbenchStore';
 import { ModelConfig } from '@/store/modelStore';
 import { callModel, modelToRequest, ModelRequestMessage } from './modelApi';
 
@@ -194,6 +194,10 @@ Respond with ONLY valid JSON:
         likelyCauses: [],
         recommendedAction: 'continue',
       }),
+      (usage) => {
+        const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+      },
     );
   });
 }

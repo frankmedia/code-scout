@@ -402,6 +402,8 @@ export interface GeneratePlanOptions {
   installHistory?: string;
   /** Agent memory prompt — what the agent has learned about this project */
   agentMemory?: string;
+  /** Pre-built scaffold reference from scaffoldRegistry — injected when the project is empty */
+  scaffoldPrompt?: string;
   onStatus?: (status: string) => void;
   onTokens?: (usage: TokenUsage) => void;
   /** When aborted, the promise rejects with AbortError. */
@@ -442,7 +444,14 @@ export function generatePlan(options: GeneratePlanOptions): Promise<Plan> {
           ]
         : userRequest;
 
-    const systemPrompt = buildSystemPrompt(files, projectName, skillMd, shellCapable, envInfo, projectIdentity, installHistory, agentMemory);
+    let systemPrompt = buildSystemPrompt(files, projectName, skillMd, shellCapable, envInfo, projectIdentity, installHistory, agentMemory);
+
+    // Inject scaffold reference when the project is empty and a matching archetype was found.
+    // This gives the planner exact file templates + package versions so its plan steps
+    // match the scaffold the coder will also follow.
+    if (options.scaffoldPrompt) {
+      systemPrompt += `\n\n${options.scaffoldPrompt}`;
+    }
     const messages: ModelRequestMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user',   content: userContent  },

@@ -42,7 +42,7 @@ function filterFileTree(nodes: FileNode[], query: string): FileNode[] {
 }
 
 const TreeNode = ({ node, depth = 0, changedFiles }: { node: FileNode; depth?: number; changedFiles: Map<string, ChangeType> }) => {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const [expanded, setExpanded] = useState(false);
   const { activeFile, openFile, rollbackFile, addLog } = useWorkbenchStore();
   const isActive = activeFile === node.path;
   const changeType = changedFiles.get(node.path) || null;

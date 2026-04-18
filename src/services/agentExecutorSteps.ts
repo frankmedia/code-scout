@@ -635,7 +635,9 @@ export function detectSmartAction(step: PlanStep): PlanStep['action'] {
   if (searchInDesc.test(desc) && !KNOWN_CLI_TOOLS.test(cmd)) return 'web_search';
 
   const cmdLower = cmd.toLowerCase();
-  if (/^(search|find|look\s*up|what\s+is|how\s+to|latest|best|top|list\s+of)\b/.test(cmdLower)) return 'web_search';
+  // Only reroute to web search if the command is NOT a known CLI tool
+  // "find src -name *.tsx" is a real command, not a web search
+  if (!KNOWN_CLI_TOOLS.test(cmd) && /^(search|look\s*up|what\s+is|how\s+to|latest|best|top|list\s+of)\b/.test(cmdLower)) return 'web_search';
 
   const hasFlags = /\s+--?\w/.test(cmd);
   const hasPipes = /[|><]/.test(cmd);

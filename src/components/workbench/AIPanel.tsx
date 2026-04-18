@@ -1284,7 +1284,11 @@ const AIPanel = () => {
           // Sync live tok/s from the orchestrator's "Receiving · N tokens · X tok/s" line
           if (s.startsWith('Receiving ·')) {
             const tps = extractTokPerSec(s);
-            if (tps) setLiveTokPerSec(Number(tps));
+            if (tps) {
+              const rate = Number(tps);
+              setLiveTokPerSec(rate);
+              setAiStreamingStats({ liveTokPerSec: rate });
+            }
           }
         },
         onLog: (msg, type) => addLog(msg, type),

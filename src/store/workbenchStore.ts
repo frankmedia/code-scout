@@ -353,7 +353,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   aiContextLimit: 0,
   setAiStreamingStats: (patch) => set(s => ({
     aiIsStreaming: patch.isStreaming ?? s.aiIsStreaming,
-    aiLiveTokPerSec: patch.liveTokPerSec !== undefined ? patch.liveTokPerSec : s.aiLiveTokPerSec,
+    // Keep last known speed — only clear when explicitly set to null AND not streaming
+    aiLiveTokPerSec: patch.liveTokPerSec !== undefined
+      ? (patch.liveTokPerSec ?? (patch.isStreaming === false ? s.aiLiveTokPerSec : null))
+      : s.aiLiveTokPerSec,
     aiContextUsed: patch.contextUsed ?? s.aiContextUsed,
     aiContextLimit: patch.contextLimit ?? s.aiContextLimit,
   })),

@@ -49,6 +49,7 @@ import {
   setEnvInfo,
   setSkillMd,
   setInstallHistoryForCoder,
+  setScaffoldHint,
   resetAgentState,
   getProjectContext,
   getWebResearchContext,
@@ -67,6 +68,7 @@ import {
 } from './agentExecutorValidation';
 
 import type { ProjectIdentity } from './planGenerator';
+import { buildScaffoldHint } from './scaffoldRegistry';
 
 // ─── Re-exports (keep consumers working) ───────────────────────────────────
 // These symbols were previously exported from this file. Consumers still
@@ -133,6 +135,15 @@ export async function executePlan(
       os: envInfo?.os ?? null,
       arch: envInfo?.arch ?? null,
     });
+
+    // Resolve scaffold hint for empty projects — the coder prompt reads it via
+    // getScaffoldHint() in agentExecutorCodeGen and agentToolLoop.
+    if (!projectIdentity.hasExistingProject) {
+      try {
+        const hint = await buildScaffoldHint(projectIdentity.framework, projectIdentity.language);
+        if (hint) setScaffoldHint(hint);
+      } catch { /* non-fatal — coder will still work without the hint */ }
+    }
   }
   // Set module-level env info so coder + repair agents know the system
   setEnvInfo(envInfo ?? useWorkbenchStore.getState().envInfo ?? undefined);

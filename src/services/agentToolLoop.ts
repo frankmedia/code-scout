@@ -543,6 +543,7 @@ async function runCoderSubLoop(opts: {
             else if (isContextLimitError(err)) { contextLimitErr = err; resolve(); }
             else { reject(err); }
           },
+          (usage) => { callbacks.onTokens(usage, 'coder'); },
         );
       });
     } finally {
@@ -899,6 +900,7 @@ export async function runAgentToolLoop(opts: {
               reject(err);
             }
           },
+          (usage) => { callbacks.onTokens(usage, 'orchestrator'); },
         );
       });
     } finally {

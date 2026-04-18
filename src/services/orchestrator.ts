@@ -10,6 +10,7 @@ import type { AgentActivityPhase } from '@/store/taskStore';
 import { buildInstallContext } from './installTracker';
 import { useAgentMemoryStore } from '@/store/agentMemoryStore';
 import { resolveEffectiveRoot } from './memoryManager';
+import { buildScaffoldPrompt } from './scaffoldRegistry';
 
 // The orchestrator is the central runtime controller.
 // It manages task state transitions and coordinates agents.
@@ -66,6 +67,9 @@ class Orchestrator {
   private taskAbort: AbortController | null = null;
   /** Persisted across startTask → executePlan so the coder agent gets env context. */
   private lastEnvInfo: EnvironmentInfo | undefined;
+  /** Persisted across startTask → executePlan so the coder gets project identity even
+   *  when UI components don't pass it explicitly to executePlan(). */
+  private lastProjectIdentity: ProjectIdentity | undefined;
 
   private ensureTaskAbort(): AbortController {
     if (!this.taskAbort) this.taskAbort = new AbortController();
@@ -162,6 +166,30 @@ class Orchestrator {
       // Non-fatal
     }
 
+    // ── Persist project identity for executePlan (UI callers may not pass it) ──
+    this.lastProjectIdentity = context.projectIdentity;
+
+    // ── Build scaffold prompt for empty projects ──────────────────────────────
+    // When the project has no existing source files, resolve the matching
+    // archetype from the scaffold registry so the planner gets exact file
+    // templates and package versions. This is async (hits npm/PyPI/crates
+    // registries on first call; cached for 24 h after that).
+    let scaffoldPrompt: string | undefined;
+    if (context.projectIdentity && !context.projectIdentity.hasExistingProject) {
+      try {
+        scaffoldPrompt = await buildScaffoldPrompt(
+          context.projectIdentity.framework,
+          context.projectIdentity.language,
+          context.projectName,
+        ) ?? undefined;
+        if (scaffoldPrompt) {
+          callbacks.onLog?.(`Scaffold matched: ${context.projectIdentity.framework} / ${context.projectIdentity.language}`, 'info');
+        }
+      } catch {
+        // Non-fatal — planner will still work without the scaffold reference
+      }
+    }
+
     try {
       if (context.orchestratorModel) {
         callbacks.onStatus?.(`Connecting to ${context.orchestratorModel.modelId}`);
@@ -176,6 +204,7 @@ class Orchestrator {
           envInfo,
           installHistory: installHistory || undefined,
           agentMemory: agentMemory || undefined,
+          scaffoldPrompt,
           modelId: context.orchestratorModel.modelId,
           provider: context.orchestratorModel.provider,
           endpoint: context.orchestratorModel.endpoint,
@@ -324,8 +353,13 @@ class Orchestrator {
       },
     };
 
+    // Use the caller-supplied projectIdentity, falling back to the one stored
+    // during startTask(). UI components (PlanTabPanel, ChatPlanCard) don't pass
+    // it explicitly, so the fallback ensures the coder still gets identity + scaffold.
+    const resolvedIdentity = projectIdentity ?? this.lastProjectIdentity;
+
     try {
-      await executePlan(filteredPlan, execCallbacks, resolvedCoderModel, resolvedVerifierModel, projectIdentity, this.lastEnvInfo);
+      await executePlan(filteredPlan, execCallbacks, resolvedCoderModel, resolvedVerifierModel, resolvedIdentity, this.lastEnvInfo);
     } finally {
       this.clearTaskAbort();
     }

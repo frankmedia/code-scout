@@ -251,6 +251,10 @@ CRITICAL — Tailwind CSS: If writing a CSS file that uses Tailwind, include the
       (chunk) => { fullText += chunk; },
       (final) => { resolve(cleanCodeResponse(final)); },
       (err) => { reject(err); },
+      (usage) => {
+        const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+      },
     );
   });
 

@@ -83,7 +83,10 @@
       "Bash(xargs kill:*)",
       "Bash(git rm:*)",
       "Bash(git reset:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(bash /Users/frank/code-scout/src-tauri/target/release/bundle/dmg/bundle_dmg.sh)",
+      "Bash(bash -x /Users/frank/code-scout/src-tauri/target/release/bundle/dmg/bundle_dmg.sh)",
+      "Bash(sw_vers)"
     ]
   }
 }

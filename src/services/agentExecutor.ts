@@ -751,19 +751,36 @@ export async function executePlan(
             break;
           }
 
-          // Collect full error context
+          // Collect full error context + file content for the failing step
           const allErrors = formatValidationFailure(validation);
+          const ws = useWorkbenchStore.getState();
           const projectFiles = flattenAllFilesCapped(
-            useWorkbenchStore.getState().files,
+            ws.files,
             (m) => callbacks.onLog(m, 'warning'),
           ).map(f => f.path).join('\n');
+
+          // Include the actual file content so the orchestrator can see wrong imports
+          let fileContent = '';
+          if (step.path) {
+            const content = ws.getFileContent(step.path);
+            if (content) fileContent = `\n\nACTUAL FILE CONTENT (${step.path}):\n${content.slice(0, 6000)}`;
+          }
+
+          // Include component file listing for import-related errors
+          let componentListing = '';
+          const componentFiles = flattenAllFilesCapped(ws.files, () => {})
+            .filter(f => /component/i.test(f.path) || /^(src\/)?components\//.test(f.path))
+            .map(f => f.path);
+          if (componentFiles.length > 0) {
+            componentListing = `\n\nCOMPONENT FILES THAT ACTUALLY EXIST:\n${componentFiles.join('\n')}`;
+          }
 
           try {
             const { requestOrchestratorReplanning } = await import('./repairAgent');
             const newSteps = await requestOrchestratorReplanning({
               step,
               attemptCount: attempt,
-              errorSummary: allErrors.slice(0, 4000),
+              errorSummary: allErrors.slice(0, 4000) + fileContent + componentListing,
               attemptHistory: ledger.attempts.map(a =>
                 `[${a.strategyId}] ${a.command?.slice(0, 100) ?? 'edit'} → ${a.result}: ${a.errorSnippet?.slice(0, 150) ?? 'ok'}`,
               ),

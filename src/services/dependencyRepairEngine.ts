@@ -537,16 +537,21 @@ export function nextRepairAction(
     }
   }
 
-  // ── Escalate to orchestrator after 3+ failed LLM attempts ─────────────────
-  // If the coder model has tried 3+ times and keeps failing, the problem is
+  // ── Escalate to orchestrator after 2+ failed LLM attempts ─────────────────
+  // If the coder model has tried 2+ times and keeps failing, the problem is
   // likely structural (wrong imports, missing files, bad project layout) —
   // not something a line-level fix can solve. Escalate to the orchestrator
   // which can see the full project, collect ALL errors, and create a
-  // comprehensive fix plan.
+  // comprehensive fix plan. Also escalate immediately if the same error
+  // repeats (coder is going in circles).
   const llmAttempts = ledger.attempts.filter(
     a => a.strategyFamily === 'llm_targeted' || a.strategyFamily === 'llm_with_search',
   ).length;
-  if (llmAttempts >= 3) {
+  const lastTwo = ledger.attempts.slice(-2);
+  const sameErrorRepeating = lastTwo.length === 2 &&
+    lastTwo[0].errorSnippet && lastTwo[1].errorSnippet &&
+    lastTwo[0].errorSnippet === lastTwo[1].errorSnippet;
+  if (llmAttempts >= 2 || sameErrorRepeating) {
     return {
       kind: 'escalate_to_orchestrator',
       context: formatLedgerForPrompt(ledger),

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import TopBar from '@/components/workbench/TopBar';
 import FileTree from '@/components/workbench/FileTree';
 import TokenPowerGrid from '@/components/workbench/TokenPowerGrid';
@@ -48,6 +48,7 @@ const Index = () => {
     () => localStorage.getItem('scout-welcomed') !== 'true'
   );
   const [terminalCollapsed, setTerminalCollapsed] = useState(true);
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const rightPanelRef = useRef<ImperativePanelHandle>(null);
 
@@ -95,8 +96,23 @@ const Index = () => {
       <TopBar />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left — Session Sidebar (fixed width) */}
-        <div className="w-52 shrink-0 border-r border-border overflow-hidden">
+        {/* Left sidebar toggle */}
+        <button
+          onClick={() => setLeftSidebarCollapsed(c => !c)}
+          className="flex items-center justify-center w-5 shrink-0 border-r border-border bg-surface-panel hover:bg-surface-hover text-muted-foreground hover:text-foreground transition-colors"
+          title={leftSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+        >
+          {leftSidebarCollapsed
+            ? <PanelLeftOpen className="h-3.5 w-3.5" />
+            : <PanelLeftClose className="h-3.5 w-3.5" />}
+        </button>
+
+        {/* Left — Session Sidebar (collapsible) */}
+        <div
+          className={`shrink-0 border-r border-border overflow-hidden transition-all duration-200 ${
+            leftSidebarCollapsed ? 'w-0' : 'w-56'
+          }`}
+        >
           <SessionSidebar />
         </div>
 

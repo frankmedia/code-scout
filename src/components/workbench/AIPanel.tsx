@@ -1401,6 +1401,10 @@ const AIPanel = () => {
             },
             (finalText) => resolve(finalText || full),
             (err) => reject(err),
+            (usage) => {
+              const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+              if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+            },
           );
         });
 
@@ -1664,6 +1668,10 @@ const AIPanel = () => {
           (chunk: string) => { full += chunk; },
           (finalText: string) => resolve(finalText || full),
           (err: Error) => reject(err),
+          (usage) => {
+            const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+            if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+          },
         );
       });
 

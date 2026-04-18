@@ -1,16 +1,25 @@
 #!/usr/bin/env node
 /**
- * Bump app version for the next release: patch +1 with carry (each segment 0..99).
+ * Sync app version across the repo (single source of truth after this runs).
  *
- * Examples: 0.1.0 → 0.1.1 → … → 0.1.99 → 0.2.0 → … → 0.99.99 → 1.0.0
+ * Modes:
+ *   (no args)           — patch +1 from current src-tauri/tauri.conf.json (0.1.3 → 0.1.4, …)
+ *   X.Y.Z               — set exact version everywhere
+ *   --set X.Y.Z         — same as X.Y.Z
  *
  * Updates:
- *   - src-tauri/tauri.conf.json  ("version")
- *   - src-tauri/Cargo.toml       (package version)
- *   - package.json               ("version", for CI / Linux bundle names)
+ *   - src-tauri/tauri.conf.json
+ *   - src-tauri/Cargo.toml (app crate version line)
+ *   - package.json
+ *   - public/code-scout/download/version.json (version + GitHub release asset URL)
  *
- * Usage: node scripts/bump-app-version.mjs
- *        npm run version:bump
+ * Usage:
+ *   node scripts/bump-app-version.mjs
+ *   node scripts/bump-app-version.mjs 0.1.20
+ *   node scripts/bump-app-version.mjs --set 0.1.20
+ *   CS_RELEASE_REPO=owner/repo node scripts/bump-app-version.mjs   # default frankmedia/code-scout
+ *
+ *   npm run version:bump
  */
 import fs from 'fs';
 import path from 'path';
@@ -21,7 +30,10 @@ const root = path.join(__dirname, '..');
 const taPath = path.join(root, 'src-tauri', 'tauri.conf.json');
 const cargoPath = path.join(root, 'src-tauri', 'Cargo.toml');
 const pkgPath = path.join(root, 'package.json');
+const versionJsonPath = path.join(root, 'public', 'code-scout', 'download', 'version.json');
 const MAX = 99;
+
+const SEMVER = /^\d+\.\d+\.\d+$/;
 
 function bumpTriple(s) {
   const parts = s
@@ -50,10 +62,45 @@ function bumpTriple(s) {
   return `${x}.${y}.${z}`;
 }
 
+function usage(code = 1) {
+  console.error(`Usage:
+  node scripts/bump-app-version.mjs              # patch bump from tauri.conf.json
+  node scripts/bump-app-version.mjs X.Y.Z       # set exact version
+  node scripts/bump-app-version.mjs --set X.Y.Z # same
+
+Env: CS_RELEASE_REPO=owner/repo (default frankmedia/code-scout) — used for version.json download URL.`);
+  process.exit(code);
+}
+
+const argv = process.argv.slice(2);
+let newV;
+let mode = 'patch';
+
+if (argv.length === 0) {
+  mode = 'patch';
+} else if (argv[0] === '--set') {
+  if (!argv[1] || !SEMVER.test(argv[1])) usage(1);
+  newV = argv[1];
+  mode = 'set';
+} else if (argv.length === 1 && SEMVER.test(argv[0])) {
+  newV = argv[0];
+  mode = 'set';
+} else if (argv[0] === '-h' || argv[0] === '--help') {
+  usage(0);
+} else {
+  usage(1);
+}
+
 const ta = JSON.parse(fs.readFileSync(taPath, 'utf8'));
 const oldV = ta.version;
 if (typeof oldV !== 'string') throw new Error('tauri.conf.json missing string "version"');
-const newV = bumpTriple(oldV);
+
+if (mode === 'patch') {
+  newV = bumpTriple(oldV);
+}
+
+if (!SEMVER.test(newV)) throw new Error(`Invalid target version: ${JSON.stringify(newV)}`);
+
 ta.version = newV;
 fs.writeFileSync(taPath, JSON.stringify(ta, null, 2) + '\n');
 
@@ -68,7 +115,27 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 pkg.version = newV;
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 
-console.log(`Version bump: ${oldV} → ${newV}`);
+const repo = (process.env.CS_RELEASE_REPO || 'frankmedia/code-scout').replace(/^\/+|\/+$/g, '');
+const url = `https://github.com/${repo}/releases/download/v${newV}/Code-Scout_${newV}_aarch64.app.tar.gz`;
+
+let notes =
+  'Website mirror — the desktop app checks GitHub releases/latest (see updater.rs).';
+try {
+  const prev = JSON.parse(fs.readFileSync(versionJsonPath, 'utf8'));
+  if (typeof prev.notes === 'string' && prev.notes.trim()) notes = prev.notes;
+} catch {
+  /* keep default */
+}
+
+fs.writeFileSync(
+  versionJsonPath,
+  JSON.stringify({ version: newV, url, notes }, null, 2) + '\n',
+);
+
+const label = mode === 'patch' ? 'Version bump' : 'Version set';
+console.log(`${label}: ${oldV} → ${newV}`);
 console.log(`  ${path.relative(root, taPath)}`);
 console.log(`  ${path.relative(root, cargoPath)}`);
 console.log(`  ${path.relative(root, pkgPath)}`);
+console.log(`  ${path.relative(root, versionJsonPath)}`);
+console.log(`  download URL: ${url}`);

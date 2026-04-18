@@ -1,4 +1,4 @@
-import { PlanStep } from '@/store/workbenchStore';
+import { PlanStep, useWorkbenchStore } from '@/store/workbenchStore';
 import { ModelConfig } from '@/store/modelStore';
 import { callModel, modelToRequest, ModelRequestMessage } from './modelApi';
 import { ValidationRunResult, formatValidationFailure } from './validationRunner';
@@ -108,6 +108,10 @@ Generate 1–3 replacement steps with a completely different strategy.`;
         }
       },
       () => resolve([]),
+      (usage) => {
+        const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+      },
     );
   });
 }
@@ -339,6 +343,10 @@ Return ONLY the JSON object for one fix.`;
         resolve(null);
       },
       () => resolve(null),
+      (usage) => {
+        const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+      },
     );
   });
 }

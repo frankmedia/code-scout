@@ -245,13 +245,22 @@ CRITICAL — Tailwind CSS: If writing a CSS file that uses Tailwind, include the
     ];
 
     let fullText = '';
+    let gotProviderTokens = false;
 
     callModel(
       modelToRequest(model, messages, signal ? { signal } : undefined),
       (chunk) => { fullText += chunk; },
-      (final) => { resolve(cleanCodeResponse(final)); },
+      (final) => {
+        // Fallback estimate if provider didn't report usage
+        if (!gotProviderTokens) {
+          const est = Math.ceil(userContent.length / 4) + Math.ceil((final || fullText).length / 4);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+        }
+        resolve(cleanCodeResponse(final));
+      },
       (err) => { reject(err); },
       (usage) => {
+        gotProviderTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
         if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
       },

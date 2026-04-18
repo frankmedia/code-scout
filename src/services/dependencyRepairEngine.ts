@@ -537,13 +537,24 @@ export function nextRepairAction(
     }
   }
 
+  // ── Escalate to orchestrator after 3+ failed LLM attempts ─────────────────
+  // If the coder model has tried 3+ times and keeps failing, the problem is
+  // likely structural (wrong imports, missing files, bad project layout) —
+  // not something a line-level fix can solve. Escalate to the orchestrator
+  // which can see the full project, collect ALL errors, and create a
+  // comprehensive fix plan.
+  const llmAttempts = ledger.attempts.filter(
+    a => a.strategyFamily === 'llm_targeted' || a.strategyFamily === 'llm_with_search',
+  ).length;
+  if (llmAttempts >= 3) {
+    return {
+      kind: 'escalate_to_orchestrator',
+      context: formatLedgerForPrompt(ledger),
+      strategyFamily: 'orchestrator_replan',
+    };
+  }
+
   // ── Escalate to LLM ───────────────────────────────────────────────────────
-  // The LLM may be called multiple times. The zero-progress guard above is the
-  // ONLY mechanism that stops the loop — NOT a hard "1 shot" counter here.
-  // This is the core of evidence-gated persistence: the LLM keeps getting chances
-  // as long as each attempt earns a non-zero progress score.
-  // When it stops making progress (score 0 twice in a row), the guard above fires
-  // and triggers search → PM reassessment → user escalation in sequence.
   const family: StrategyFamily = ledger.webSearchDone ? 'llm_with_search' : 'llm_targeted';
   return { kind: 'escalate_to_llm', context: formatLedgerForPrompt(ledger), strategyFamily: family };
 }

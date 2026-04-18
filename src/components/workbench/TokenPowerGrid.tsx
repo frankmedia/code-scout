@@ -69,6 +69,9 @@ const TokenPowerGrid: React.FC = () => {
 
   const aiIsStreaming    = useWorkbenchStore(s => s.aiIsStreaming);
   const aiLiveTokPerSec = useWorkbenchStore(s => s.aiLiveTokPerSec);
+  // Remember the last known speed so it doesn't disappear between streams
+  const lastSpeedRef = useRef<number | null>(null);
+  if (aiLiveTokPerSec !== null) lastSpeedRef.current = aiLiveTokPerSec;
   const aiSessionTotal  = useWorkbenchStore(s => s.aiSessionTotalTokens);
   const aiSessionStart  = useWorkbenchStore(s => s.aiSessionStartTime);
   const aiContextUsed   = useWorkbenchStore(s => s.aiContextUsed);
@@ -237,7 +240,11 @@ const TokenPowerGrid: React.FC = () => {
               },
               {
                 label: 'Speed',
-                value: aiIsStreaming && aiLiveTokPerSec !== null ? fmtRate(aiLiveTokPerSec) : '---',
+                value: aiLiveTokPerSec !== null
+                  ? fmtRate(aiLiveTokPerSec)
+                  : lastSpeedRef.current !== null
+                    ? fmtRate(lastSpeedRef.current)
+                    : '---',
                 highlight: aiIsStreaming,
               },
               {

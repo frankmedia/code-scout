@@ -182,7 +182,7 @@ const RoleModelDropdown = ({
         {role === 'orchestrator'
           ? <Brain className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
           : <Terminal className="h-3 w-3 shrink-0 opacity-70" aria-hidden />}
-        <span className="font-mono truncate max-w-[100px]">{displayName}</span>
+        <span className="font-mono truncate max-w-[80px]">{displayName}</span>
         <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
       </button>
 
@@ -2266,7 +2266,7 @@ const AIPanel = () => {
       <div className="pt-2 pb-3 border-t border-border space-y-2 shrink-0">
 
         {/* ── Toolbar row: mode toggle · model dropdowns · stop · context bar ── */}
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
           <div className="flex items-center bg-secondary rounded-lg p-1 shrink-0">
             {modeOptions.map(m => (
               <button

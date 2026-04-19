@@ -217,6 +217,8 @@ const ARCHETYPES: ScaffoldArchetype[] = [
       { ecosystem: 'npm', name: 'tailwindcss', dev: true },
       { ecosystem: 'npm', name: 'postcss', dev: true },
       { ecosystem: 'npm', name: 'autoprefixer', dev: true },
+      { ecosystem: 'npm', name: 'clsx' },
+      { ecosystem: 'npm', name: 'tailwind-merge' },
     ],
     files: [
       {
@@ -232,8 +234,10 @@ const ARCHETYPES: ScaffoldArchetype[] = [
     "preview": "vite preview"
   },
   "dependencies": {
+    "clsx": "{{PKG:npm:clsx}}",
     "react": "{{PKG:npm:react}}",
-    "react-dom": "{{PKG:npm:react-dom}}"
+    "react-dom": "{{PKG:npm:react-dom}}",
+    "tailwind-merge": "{{PKG:npm:tailwind-merge}}"
   },
   "devDependencies": {
     "@types/react": "{{PKG:npm:@types/react}}",
@@ -341,6 +345,22 @@ createRoot(document.getElementById("root")!).render(
   );
 }`,
       },
+      {
+        path: 'src/lib/utils.ts',
+        content: `import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}`,
+      },
+      {
+        path: '.gitignore',
+        content: `node_modules
+dist
+.env
+.env.local`,
+      },
     ],
   },
 
@@ -358,6 +378,8 @@ createRoot(document.getElementById("root")!).render(
       { ecosystem: 'npm', name: 'next' },
       { ecosystem: 'npm', name: 'react' },
       { ecosystem: 'npm', name: 'react-dom' },
+      { ecosystem: 'npm', name: 'clsx' },
+      { ecosystem: 'npm', name: 'tailwind-merge' },
       { ecosystem: 'npm', name: 'typescript', dev: true },
       { ecosystem: 'npm', name: '@types/node', dev: true },
       { ecosystem: 'npm', name: '@types/react', dev: true },
@@ -380,9 +402,11 @@ createRoot(document.getElementById("root")!).render(
     "lint": "next lint"
   },
   "dependencies": {
+    "clsx": "{{PKG:npm:clsx}}",
     "next": "{{PKG:npm:next}}",
     "react": "{{PKG:npm:react}}",
-    "react-dom": "{{PKG:npm:react-dom}}"
+    "react-dom": "{{PKG:npm:react-dom}}",
+    "tailwind-merge": "{{PKG:npm:tailwind-merge}}"
   },
   "devDependencies": {
     "@types/node": "{{PKG:npm:@types/node}}",
@@ -479,6 +503,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <h1 className="text-4xl font-bold">Hello World</h1>
     </main>
   );
+}`,
+      },
+      {
+        path: 'src/lib/utils.ts',
+        content: `import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
 }`,
       },
       {

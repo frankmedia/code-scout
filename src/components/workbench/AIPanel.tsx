@@ -1389,6 +1389,8 @@ const AIPanel = () => {
           { role: 'user', content: userMsg },
         ];
 
+        pushOrUpdateActivity('Triaging request…');
+
         const triageResult = await new Promise<string>((resolve, reject) => {
           let full = '';
           let gotTokens = false;

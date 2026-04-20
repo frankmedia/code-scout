@@ -175,4 +175,4 @@ jobs:
           releaseDraft: true
           prerelease: true
           includeUpdaterJson: false
-          args: --target aarch64-apple-darwin
+          args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json

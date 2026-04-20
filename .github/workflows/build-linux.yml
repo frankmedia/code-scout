@@ -70,4 +70,4 @@ jobs:
           releaseDraft: true
           prerelease: true
           includeUpdaterJson: false
-          args: --target x86_64-unknown-linux-gnu
+          args: --target x86_64-unknown-linux-gnu --config src-tauri/tauri.nosidecar.conf.json --config src-tauri/tauri.release.conf.json

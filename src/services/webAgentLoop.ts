@@ -10,7 +10,7 @@
 
 import { callModel, modelToRequest, type ModelRequestMessage } from './modelApi';
 import { useModelStore } from '../store/modelStore';
-import { executeBrowserAction, clearAccumulatedData, getAccumulatedData, recordWebHistory, getRecentWebHistorySummary } from './browserExecutor';
+import { executeBrowserAction, clearAccumulatedData, getAccumulatedData, recordWebHistory, getRecentWebHistorySummary, initWebFolder } from './browserExecutor';
 import * as browserService from './browserService';
 
 // Track actions performed during the session for history
@@ -57,17 +57,166 @@ export interface WebAgentCallbacks {
   onThinking: (thought: string) => void;
   onComplete: (answer: string) => void;
   onError: (error: string) => void;
+  onWaitForUser?: (message: string) => Promise<void>; // Pause and wait for user to complete action
   trackTokens?: (input: number, output: number, role: 'orchestrator' | 'coder') => void;
 }
 
 const MAX_STEPS = 25;
+
+/**
+ * Use Coder model to analyze data and generate polished final answers.
+ * This shifts token usage from paid Orchestrator to free Coder.
+ */
+async function generateCoderAnalysis(
+  task: string,
+  orchestratorSummary: string,
+  extractedData: string | null,
+  pageContent: string | null,
+  callbacks: WebAgentCallbacks
+): Promise<string> {
+  const modelStore = useModelStore.getState();
+  const coderModel = modelStore.getModelForRole('coder');
+  
+  if (!coderModel) {
+    // Fall back to orchestrator's summary if no coder configured
+    return orchestratorSummary;
+  }
+  
+  callbacks.onThinking('Coder analyzing results...');
+  
+  const systemPrompt = `You are a data analyst assistant. Your job is to take raw extracted web data and produce a clear, well-formatted answer for the user.
+
+**Your responsibilities:**
+1. Parse and understand the extracted content
+2. Answer the user's original question directly
+3. Format your response using markdown for readability
+4. Include relevant details, lists, or tables as appropriate
+5. Be concise but comprehensive
+
+**Formatting guidelines:**
+- Use **bold** for emphasis
+- Use bullet points or numbered lists for multiple items
+- Use tables for comparative data
+- Include relevant URLs if they help the user
+- Don't include raw HTML or messy data`;
+
+  const userPrompt = `**USER'S TASK:** ${task}
+
+**ORCHESTRATOR'S SUMMARY:** ${orchestratorSummary}
+
+${extractedData ? `**EXTRACTED DATA:**\n${extractedData.slice(0, 8000)}` : ''}
+
+${pageContent ? `**PAGE CONTENT:**\n${pageContent.slice(0, 4000)}` : ''}
+
+Based on the above, provide a clear, well-formatted answer to the user's task. Focus on what they actually asked for.`;
+
+  const messages: ModelRequestMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  let responseText = '';
+  try {
+    const request = modelToRequest(coderModel, messages, { maxOutputTokens: 2000 });
+    
+    await new Promise<void>((resolve, reject) => {
+      callModel(
+        request,
+        (chunk) => { responseText += chunk; },
+        () => resolve(),
+        reject,
+        (usage) => {
+          if (callbacks.trackTokens) {
+            callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'coder');
+          }
+        }
+      );
+    });
+    
+    return responseText.trim() || orchestratorSummary;
+  } catch (err) {
+    console.warn('[webAgentLoop] Coder analysis failed, using orchestrator summary:', err);
+    return orchestratorSummary;
+  }
+}
+
+/**
+ * Use Coder to analyze/summarize data after heavy extraction actions.
+ * Called after crawl, sitemap, browser_extract with large content.
+ */
+async function analyzeExtractedData(
+  actionType: string,
+  rawOutput: string,
+  task: string,
+  callbacks: WebAgentCallbacks
+): Promise<string> {
+  const modelStore = useModelStore.getState();
+  const coderModel = modelStore.getModelForRole('coder');
+  
+  if (!coderModel || rawOutput.length < 500) {
+    // Don't bother with tiny outputs
+    return rawOutput;
+  }
+  
+  callbacks.onThinking('Coder processing extracted data...');
+  
+  const systemPrompt = `You are a data processing assistant. Summarize and structure the extracted web data concisely.
+Keep important details but remove noise. Output clean, readable text.`;
+
+  const userPrompt = `**Action:** ${actionType}
+**User's task:** ${task}
+
+**Raw extracted data:**
+${rawOutput.slice(0, 10000)}
+
+Provide a clean, structured summary of this data that would help complete the user's task.`;
+
+  const messages: ModelRequestMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  let responseText = '';
+  try {
+    const request = modelToRequest(coderModel, messages, { maxOutputTokens: 1500 });
+    
+    await new Promise<void>((resolve, reject) => {
+      callModel(
+        request,
+        (chunk) => { responseText += chunk; },
+        () => resolve(),
+        reject,
+        (usage) => {
+          if (callbacks.trackTokens) {
+            callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'coder');
+          }
+        }
+      );
+    });
+    
+    return responseText.trim() || rawOutput;
+  } catch {
+    return rawOutput;
+  }
+}
 
 async function buildAgentSystemPrompt(): Promise<string> {
   // Get recent history for context
   const historyContext = await getRecentWebHistorySummary(3);
   const historySection = historyContext ? `\n\n**RECENT HISTORY (for context):**\n${historyContext}\n` : '';
   
-  return `You are a reactive web browsing agent. You control a real browser one action at a time.${historySection}
+  // Current date for search context
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const year = now.getFullYear();
+  
+  return `You are a reactive web browsing agent. You control a real browser one action at a time.
+
+**TODAY'S DATE:** ${dateStr}
+**CURRENT YEAR:** ${year}
+
+When searching for information, use the current year (${year}) in your queries to get up-to-date results. For example, search "best AI IDEs ${year}" not "best AI IDEs 2024".
+${historySection}
 
 **Your loop:**
 1. OBSERVE: You see the current browser state (URL, page content, form fields if detected)
@@ -101,6 +250,8 @@ async function buildAgentSystemPrompt(): Promise<string> {
 - **browser_screenshot**: Capture the page visually.
 - **browser_scroll**: Scroll the page. Use "value": "down" or "up".
 - **browser_wait**: Wait for content. Use "value": "2000" for 2 seconds.
+- **accept_cookies**: **Use when you see a cookie consent banner!** Automatically clicks "Accept all" or similar buttons.
+- **wait_for_user**: **Use when you need human help!** Pauses automation and asks user to complete an action (login, CAPTCHA, verification). Use "value" to explain what they need to do.
 - **detect_form**: **MANDATORY before filling forms!** Discovers all form fields with their exact CSS selectors.
 - **get_links**: Extract all links on the page.
 - **crawl**: Crawl multiple pages. Use "value" for max pages.
@@ -110,6 +261,8 @@ async function buildAgentSystemPrompt(): Promise<string> {
 - **save_markdown**: Save a formatted report. Use "path" for filename.
 - **save_screenshot**: Save current browser view as PNG. Use "path" for filename.
 - **done**: Task complete! Use "value" to provide your final answer/summary to the user.
+
+**COOKIE CONSENT:** When you see a cookie banner blocking the page, use **accept_cookies** - it automatically finds and clicks the right button for Google, OneTrust, Cookiebot, and other common consent systems.
 
 **FILE SAVING:** Data is automatically accumulated from:
 - browser_fill: Each form field you fill is tracked (field, value, timestamp)
@@ -139,19 +292,48 @@ Step 8: { "action": "done", "value": "Filled contact form on elsewhen.com with J
 
 **IMPORTANT:** Notice we went to ELSEWHEN.COM because that's what the user asked for - not w3schools or any other site!
 
+**Example: Search Google for information:**
+Step 1: { "action": "browser_launch", "reason": "Start browser" }
+Step 2: { "action": "browser_goto", "url": "https://www.google.com/search?q=best+AI+coding+tools+2026", "reason": "Go directly to Google search results" }
+Step 3: { "action": "accept_cookies", "reason": "Dismiss cookie banner if present" }
+Step 4: { "action": "browser_extract", "reason": "Read search results" }
+Step 5: { "action": "done", "value": "Found these AI coding tools: 1. Cursor, 2. GitHub Copilot...", "reason": "Summarize results" }
+
+**NOTICE:** We went DIRECTLY to search results URL, not google.com homepage. We did NOT switch to Bing!
+
 **Example: Crawl site and save to CSV:**
 Step 1: { "action": "browser_goto", "url": "https://example.com/products", "reason": "Navigate to products page" }
 Step 2: { "action": "crawl", "value": "20", "reason": "Crawl up to 20 product pages" }
 Step 3: { "action": "save_csv", "path": "products.csv", "reason": "Save crawled data to CSV" }
 Step 4: { "action": "done", "value": "Crawled 20 product pages and saved to products.csv", "reason": "Task complete" }
 
+**GOOGLE SEARCH (IMPORTANT!):**
+When asked to search Google:
+1. Go DIRECTLY to search results URL: https://www.google.com/search?q=YOUR+SEARCH+TERMS
+2. Do NOT go to google.com homepage first
+3. Do NOT switch to Bing or other search engines - STAY ON GOOGLE
+4. If you see a cookie banner, use accept_cookies action
+5. If Google asks for login, verification, or CAPTCHA - use **wait_for_user** to ask the user to complete it
+6. Example: "search google for best AI tools" → browser_goto: "https://www.google.com/search?q=best+AI+tools+${year}"
+
+**WHEN TO ASK USER FOR HELP (wait_for_user):**
+Use wait_for_user when you encounter:
+- Login pages (Google, social media, etc.)
+- CAPTCHA that you can't solve
+- "Verify you're not a robot" prompts
+- Two-factor authentication
+- Any verification the browser automation can't handle
+
+Example: { "action": "wait_for_user", "value": "Please log into your Google account in the browser window, then click Continue", "reason": "Google requires login" }
+
 **General rules:**
 - Be efficient - take the minimum actions needed
-- If an action fails, try an alternative approach
+- If an action fails, try an alternative approach but STAY on the same site/search engine
 - Use browser_extract to read page content when you need information
 - When you have enough information to answer the user, use "done"
 - Always provide a helpful "value" in your "done" action summarizing what you accomplished
 - If user asks to save data, use the appropriate save_* action
+- **NEVER switch search engines!** If user says "search google", use ONLY Google. Do NOT fall back to Bing, DuckDuckGo, or any other search engine.
 - **NEVER navigate to a different website than what the user asked for!** If user says "elsewhen.com", go ONLY to elsewhen.com, not w3schools or any other site.
 - If you can't find something on the user's specified site, report that - don't go to random sites.`;
 }
@@ -235,6 +417,9 @@ export async function runWebAgentLoop(
   clearAccumulatedData();
   sessionActions = [];
   sessionDataFiles = [];
+  
+  // Initialize .codescout_web folder structure at the start of every web task
+  await initWebFolder();
   
   const state: WebAgentState = {
     browserRunning: false,
@@ -329,10 +514,25 @@ export async function runWebAgentLoop(
     // Track action for history
     sessionActions.push(action.action);
     
-    // Handle "done" action
+    // Handle "done" action - use Coder for polished final answer
     if (action.action === 'done') {
       state.done = true;
-      state.finalAnswer = action.value || action.reason || 'Task completed';
+      const orchestratorSummary = action.value || action.reason || 'Task completed';
+      
+      // Get accumulated data for Coder analysis
+      const accumulatedData = getAccumulatedData();
+      const extractedDataStr = accumulatedData.length > 0 
+        ? JSON.stringify(accumulatedData.slice(-10), null, 2) // Last 10 items
+        : null;
+      
+      // Use Coder to generate polished final answer (free tokens!)
+      state.finalAnswer = await generateCoderAnalysis(
+        task,
+        orchestratorSummary,
+        extractedDataStr,
+        state.pageContent,
+        callbacks
+      );
       
       // Record history on success
       recordWebHistory({
@@ -346,6 +546,44 @@ export async function runWebAgentLoop(
       
       callbacks.onComplete(state.finalAnswer);
       return;
+    }
+    
+    // Handle "wait_for_user" action - pause and ask user to complete something
+    if (action.action === 'wait_for_user') {
+      const userMessage = action.value || action.reason || 'Please complete the action in the browser window';
+      callbacks.onThinking(`⏸️ Waiting for user: ${userMessage}`);
+      
+      if (callbacks.onActionComplete) {
+        callbacks.onActionComplete(action, { success: true, output: `Waiting for user: ${userMessage}` });
+      }
+      
+      if (callbacks.onWaitForUser) {
+        // Wait for user to complete the action and click continue
+        await callbacks.onWaitForUser(userMessage);
+        
+        // After user continues, refresh browser state
+        const newStatus = await browserService.getBrowserStatus();
+        if (newStatus.success) {
+          state.browserRunning = newStatus.browserRunning || false;
+          if (newStatus.currentUrl) state.currentUrl = newStatus.currentUrl;
+          if (newStatus.currentTitle) state.currentTitle = newStatus.currentTitle;
+        }
+        
+        // Extract new page content after user action
+        const extractResult = await browserService.browserExtract();
+        if (extractResult.success) {
+          state.pageContent = extractResult.content || null;
+        }
+        
+        state.lastActionResult = 'User completed the requested action. Continuing...';
+        callbacks.onStateChange({ ...state });
+        continue; // Continue to next iteration
+      } else {
+        // No callback provided, just wait a bit and continue
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        state.lastActionResult = 'Waited 5 seconds for user action';
+        continue;
+      }
     }
     
     // Execute the action
@@ -365,6 +603,17 @@ export async function runWebAgentLoop(
         const fileMatch = result.output.match(/\.codescout_web\/(?:data|screenshots)\/([^\s]+)/);
         if (fileMatch) {
           sessionDataFiles.push(fileMatch[0]);
+        }
+      }
+      
+      // Use Coder to analyze large extraction results (free tokens!)
+      const DATA_HEAVY_ACTIONS = ['crawl', 'sitemap', 'browser_extract', 'get_links'];
+      if (DATA_HEAVY_ACTIONS.includes(action.action) && result.success && result.output.length > 1000) {
+        const analyzed = await analyzeExtractedData(action.action, result.output, task, callbacks);
+        state.lastActionResult = analyzed;
+        // Update the callback with analyzed result
+        if (callbacks.onActionComplete) {
+          callbacks.onActionComplete(action, { success: true, output: analyzed });
         }
       }
       

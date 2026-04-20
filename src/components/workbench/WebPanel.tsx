@@ -32,6 +32,8 @@ import { useModeStore } from '@/store/modeStore';
 import { useModelStore } from '@/store/modelStore';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { useActivityStore } from '@/store/activityStore';
+import { useWebSessionStore } from '@/store/webSessionStore';
+import { useProjectStore } from '@/store/projectStore';
 import {
   launchBrowser,
   closeBrowser,
@@ -42,6 +44,7 @@ import {
   startBrowserAgent,
 } from '@/services/browserService';
 import { runWebAgentLoop, type WebAgentAction } from '@/services/webAgentLoop';
+import { initWebFolder } from '@/services/browserExecutor';
 import { ChatMarkdown } from './ChatMarkdown';
 
 // Action icons matching coding mode style
@@ -83,6 +86,7 @@ interface WebTaskCard {
   steps: WebStep[];
   result?: string;
   screenshot?: string;
+  thinking?: string; // Current thinking/processing status
 }
 
 interface WebMessage {
@@ -188,15 +192,28 @@ const WebPanel = () => {
   const setActiveCenterTab = useWorkbenchStore(s => s.setActiveCenterTab);
   const addAiSessionTokens = useWorkbenchStore(s => s.addAiSessionTokens);
   const recordTokens = useActivityStore(s => s.recordTokens);
+  
+  // Web session tracking
+  const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const { createSession, updateSession } = useWebSessionStore();
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const [webSessionTokens, setWebSessionTokens] = useState({ 
     orchestratorIn: 0, orchestratorOut: 0,
     coderIn: 0, coderOut: 0 
   });
+  
+  // For wait_for_user action - shows a prompt and waits for user to continue
+  const [userPrompt, setUserPrompt] = useState<{ message: string; resolve: () => void } | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Initialize .codescout_web folder when web mode is opened
+  useEffect(() => {
+    initWebFolder().catch(() => {});
+  }, []);
 
   useEffect(() => {
     const checkStatus = async () => {
@@ -338,6 +355,13 @@ const WebPanel = () => {
     const taskId = crypto.randomUUID();
     setActiveTaskId(taskId);
     abortControllerRef.current = new AbortController();
+    
+    // Create session in store for sidebar
+    let sessionId: string | null = null;
+    if (activeProjectId) {
+      sessionId = createSession(activeProjectId, text);
+      setCurrentSessionId(sessionId);
+    }
 
     // Create the task card
     const taskCard: WebTaskCard = {
@@ -354,6 +378,7 @@ const WebPanel = () => {
     });
 
     let currentStepId: string | null = null;
+    let stepCount = 0;
 
     try {
       await runWebAgentLoop(text, {
@@ -366,6 +391,7 @@ const WebPanel = () => {
         onAction: (action: WebAgentAction) => {
           const stepId = crypto.randomUUID();
           currentStepId = stepId;
+          stepCount++;
           
           const detail = action.url || action.selector || action.value || action.path || '';
           
@@ -377,6 +403,11 @@ const WebPanel = () => {
             status: 'running',
             reason: action.reason,
           });
+          
+          // Update step count in session
+          if (activeProjectId && sessionId) {
+            updateSession(activeProjectId, sessionId, { stepsCount: stepCount });
+          }
         },
 
         onActionComplete: (action, result) => {
@@ -389,15 +420,24 @@ const WebPanel = () => {
           }
         },
 
-        onThinking: () => {
-          // Already marked as done in onActionComplete
+        onThinking: (thought) => {
+          // Show thinking status (especially useful for Coder analysis)
+          updateTaskCard(taskId, { thinking: thought });
         },
 
         onComplete: (answer) => {
           if (currentStepId) {
             updateStepInTask(taskId, currentStepId, { status: 'done' });
           }
-          updateTaskCard(taskId, { status: 'done', result: answer });
+          updateTaskCard(taskId, { status: 'done', result: answer, thinking: undefined });
+          
+          // Update session in store
+          if (activeProjectId && sessionId) {
+            updateSession(activeProjectId, sessionId, { 
+              status: 'done',
+              url: currentBrowserUrl || undefined,
+            });
+          }
           
           browserScreenshot().then(result => {
             if (result.success && result.screenshot) {
@@ -412,6 +452,11 @@ const WebPanel = () => {
             updateStepInTask(taskId, currentStepId, { status: 'error' });
           }
           updateTaskCard(taskId, { status: 'error', result: error });
+          
+          // Update session in store
+          if (activeProjectId && sessionId) {
+            updateSession(activeProjectId, sessionId, { status: 'error' });
+          }
         },
 
         trackTokens: (input, output, role) => {
@@ -423,12 +468,26 @@ const WebPanel = () => {
               : { ...prev, orchestratorIn: prev.orchestratorIn + input, orchestratorOut: prev.orchestratorOut + output }
           );
         },
+
+        onWaitForUser: (message) => {
+          return new Promise<void>((resolve) => {
+            setUserPrompt({ message, resolve });
+          });
+        },
       }, abortControllerRef.current.signal);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         updateTaskCard(taskId, { status: 'stopped', result: 'Stopped by user' });
+        // Update session in store
+        if (activeProjectId && sessionId) {
+          updateSession(activeProjectId, sessionId, { status: 'stopped' });
+        }
       } else {
         updateTaskCard(taskId, { status: 'error', result: err instanceof Error ? err.message : String(err) });
+        // Update session in store
+        if (activeProjectId && sessionId) {
+          updateSession(activeProjectId, sessionId, { status: 'error' });
+        }
       }
     } finally {
       setActiveTaskId(null);
@@ -461,9 +520,16 @@ const WebPanel = () => {
 
             {(webSessionTokens.orchestratorIn > 0 || webSessionTokens.coderIn > 0) && (
               <div className="ml-2 flex items-center gap-1 text-[10px] font-mono">
-                <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 rounded">
-                  🎯 {((webSessionTokens.orchestratorIn + webSessionTokens.orchestratorOut) / 1000).toFixed(1)}k
-                </span>
+                {webSessionTokens.orchestratorIn > 0 && (
+                  <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 rounded" title="Orchestrator (paid)">
+                    🎯 {((webSessionTokens.orchestratorIn + webSessionTokens.orchestratorOut) / 1000).toFixed(1)}k
+                  </span>
+                )}
+                {webSessionTokens.coderIn > 0 && (
+                  <span className="px-1.5 py-0.5 bg-cyan-500/10 text-cyan-400 rounded" title="Coder (free)">
+                    🆓 {((webSessionTokens.coderIn + webSessionTokens.coderOut) / 1000).toFixed(1)}k
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -486,7 +552,20 @@ const WebPanel = () => {
                 </button>
               </>
             )}
-            <button onClick={() => { setWebModeEnabled(false); setActiveCenterTab('chat'); }} className="ml-2 p-1 text-muted-foreground hover:text-foreground" title="Close Web Mode">
+            <button 
+              onClick={() => { 
+                setWebModeEnabled(false); 
+                setActiveCenterTab('chat');
+                // Clear messages and reset session
+                setMessages([
+                  { id: 'welcome', role: 'assistant', content: '', timestamp: Date.now() }
+                ]);
+                setWebSessionTokens({ orchestratorIn: 0, orchestratorOut: 0, coderIn: 0, coderOut: 0 });
+                setCurrentSessionId(null);
+              }} 
+              className="ml-2 p-1 text-muted-foreground hover:text-foreground" 
+              title="Close Web Mode"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -501,17 +580,17 @@ const WebPanel = () => {
         {/* File save location hint */}
         <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/60">
           <Download className="h-2.5 w-2.5" />
-          <span>Data saved to <code className="px-0.5 bg-secondary/50 rounded">.codescout_web/</code></span>
+          <span>Data → <code className="px-0.5 bg-secondary/50 rounded">.codescout_web/</code></span>
         </div>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map(msg => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} w-full`}>
             {msg.taskCard ? (
-              // Task Card - matches coding mode plan card style
-              <div className="w-full max-w-xl rounded-lg border border-border bg-secondary/30 overflow-hidden">
+              // Task Card - full width responsive
+              <div className="w-full rounded-lg border border-border bg-secondary/30 overflow-hidden">
                 {/* Card header */}
                 <div className="flex items-start justify-between gap-2 px-3 py-2 border-b border-border/50 bg-secondary/50">
                   <div className="flex-1 min-w-0">
@@ -539,11 +618,19 @@ const WebPanel = () => {
                 </div>
 
                 {/* Steps list */}
-                <div className="max-h-64 overflow-y-auto">
+                <div className="max-h-[50vh] overflow-y-auto">
                   {msg.taskCard.steps.map(step => (
                     <StepRow key={step.id} step={step} />
                   ))}
                 </div>
+
+                {/* Thinking indicator (shows Coder analysis, etc.) */}
+                {msg.taskCard.thinking && msg.taskCard.status === 'running' && (
+                  <div className="px-3 py-1.5 border-t border-border/30 bg-cyan-500/5 flex items-center gap-2">
+                    <Loader2 className="h-3 w-3 text-cyan-400 animate-spin" />
+                    <span className="text-[10px] text-cyan-400">{msg.taskCard.thinking}</span>
+                  </div>
+                )}
 
                 {/* Result */}
                 {msg.taskCard.result && (
@@ -566,13 +653,13 @@ const WebPanel = () => {
                 )}
               </div>
             ) : (
-              // Regular message
-              <div className={`max-w-[85%] rounded-lg px-3 py-2 ${
+              // Regular message - user messages are compact, assistant messages are full width
+              <div className={`rounded-lg px-3 py-2 ${
                 msg.role === 'user'
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'max-w-[85%] bg-primary text-primary-foreground'
                   : msg.role === 'system'
-                  ? 'bg-muted text-muted-foreground text-xs'
-                  : 'bg-secondary text-foreground'
+                  ? 'max-w-[85%] bg-muted text-muted-foreground text-xs'
+                  : 'w-full bg-secondary text-foreground'
               }`}>
                 {msg.role === 'assistant' ? (
                   <div className="text-sm prose prose-sm dark:prose-invert max-w-none">
@@ -622,6 +709,42 @@ const WebPanel = () => {
           </button>
         </div>
       </div>
+
+      {/* User Action Required Overlay */}
+      {userPrompt && (
+        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border-2 border-amber-500 rounded-xl p-6 max-w-md mx-4 shadow-2xl animate-pulse-slow">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center">
+                <span className="text-2xl">✋</span>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-amber-400">Action Required</h3>
+                <p className="text-xs text-muted-foreground">Complete this in the browser window</p>
+              </div>
+            </div>
+            
+            <div className="bg-secondary/50 rounded-lg p-4 mb-4">
+              <p className="text-sm text-foreground">{userPrompt.message}</p>
+            </div>
+            
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-4">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>Waiting for you to complete the action...</span>
+            </div>
+            
+            <button
+              onClick={() => {
+                userPrompt.resolve();
+                setUserPrompt(null);
+              }}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-black font-semibold rounded-lg transition-colors"
+            >
+              ✓ Done — Continue Automation
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

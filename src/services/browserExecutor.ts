@@ -22,6 +22,7 @@ import {
   crawlSite,
   generateSitemap,
   detectForm,
+  acceptCookies,
   BrowserResult,
 } from './browserService';
 import { writeTextFile, writeFile, mkdir, exists } from '@tauri-apps/plugin-fs';
@@ -37,9 +38,12 @@ async function ensureWebFolder(projectPath: string): Promise<string> {
   const webFolder = await join(projectPath, WEB_FOLDER);
   const dataFolder = await join(webFolder, WEB_DATA_FOLDER);
   const screenshotsFolder = await join(webFolder, WEB_SCREENSHOTS_FOLDER);
+  const readmePath = await join(webFolder, 'README.md');
   
   try {
-    if (!await exists(webFolder)) {
+    const folderExisted = await exists(webFolder);
+    
+    if (!folderExisted) {
       await mkdir(webFolder, { recursive: true });
     }
     if (!await exists(dataFolder)) {
@@ -47,6 +51,30 @@ async function ensureWebFolder(projectPath: string): Promise<string> {
     }
     if (!await exists(screenshotsFolder)) {
       await mkdir(screenshotsFolder, { recursive: true });
+    }
+    
+    // Create README if folder is new
+    if (!folderExisted) {
+      const readme = `# Code Scout Web Automation
+
+This folder contains data from Code Scout's web automation tasks.
+
+## Folders
+
+- **data/** - Extracted data (JSON, CSV, Markdown reports)
+- **screenshots/** - Browser screenshots
+
+## Files
+
+- **history.json** - Log of all web tasks run in this project
+
+## Notes
+
+- Files are automatically saved here when you use save_json, save_csv, etc.
+- History tracks what tasks you've run for context in future sessions
+- You can safely delete files here; they won't affect the app
+`;
+      await writeTextFile(readmePath, readme);
     }
   } catch (err) {
     console.warn('[browserExecutor] Could not create .codescout_web folder:', err);
@@ -147,7 +175,22 @@ async function getRecentWebHistorySummary(limit = 5): Promise<string> {
   return `Recent web tasks:\n${lines.join('\n')}`;
 }
 
-export { recordWebHistory, loadWebHistory, getRecentWebHistorySummary };
+// Initialize the .codescout_web folder structure for the current project
+async function initWebFolder(): Promise<boolean> {
+  const projectPath = useWorkbenchStore.getState().projectPath;
+  if (!projectPath) return false;
+  
+  try {
+    await ensureWebFolder(projectPath);
+    console.log('[browserExecutor] Initialized .codescout_web folder at:', projectPath);
+    return true;
+  } catch (err) {
+    console.warn('[browserExecutor] Failed to initialize web folder:', err);
+    return false;
+  }
+}
+
+export { recordWebHistory, loadWebHistory, getRecentWebHistorySummary, initWebFolder };
 
 // Store for accumulated data from browser actions (for save_* commands)
 let accumulatedData: { type: string; data: unknown }[] = [];
@@ -361,6 +404,15 @@ export async function executeBrowserAction(
           success: result.success,
           output: result.success ? 'CAPTCHA image captured' : (result.error ?? 'Failed to get CAPTCHA'),
           screenshot: result.screenshot,
+        };
+      }
+
+      case 'accept_cookies': {
+        log('🍪 Accepting cookie consent...');
+        result = await acceptCookies();
+        return {
+          success: result.success,
+          output: result.message ?? result.error ?? 'Cookie consent handled',
         };
       }
 
@@ -626,5 +678,5 @@ export function isBrowserAction(action: string): boolean {
   return action.startsWith('browser_') || 
          action.startsWith('save_') || 
          action.startsWith('captcha_') ||
-         ['crawl', 'sitemap', 'get_links', 'detect_form'].includes(action);
+         ['crawl', 'sitemap', 'get_links', 'detect_form', 'accept_cookies', 'wait_for_user'].includes(action);
 }

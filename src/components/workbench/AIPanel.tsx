@@ -63,7 +63,6 @@ function providerSupportsNativeTools(provider: ModelProvider): boolean {
 const modeOptions: { key: AppMode; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'agent', label: 'Agent' },
-  { key: 'web', label: 'Web' },
 ];
 
 const MAX_ATTACHMENTS = 4;
@@ -2293,9 +2292,7 @@ const AIPanel = () => {
           </div>
 
           <RoleModelDropdown role="orchestrator" label="Orch" />
-          {(mode === 'agent' || mode === 'build') && (
-            <RoleModelDropdown role="coder" label="Coder" />
-          )}
+          <RoleModelDropdown role="coder" label="Coder" />
 
           {/* Stop button — shown only while agent is busy */}
           {isAgentBusy && (
@@ -2412,7 +2409,7 @@ const AIPanel = () => {
               e.preventDefault();
               if (canSendIdle) void handleSend();
             }}
-            placeholder={mode === 'web' ? 'Describe what to do in the browser...' : (mode === 'agent' || mode === 'build' || mode === 'plan') ? 'Tell me what to do...' : 'Ask a question...'}
+            placeholder={(mode === 'agent' || mode === 'build' || mode === 'plan') ? 'Tell me what to do...' : 'Ask a question...'}
             className="w-full min-h-[6rem] max-h-44 bg-input text-foreground text-[12px] rounded-lg pl-3 pr-10 pt-3 pb-9 resize-none focus:outline-none focus:ring-2 focus:ring-primary/80 focus:ring-offset-2 focus:ring-offset-background placeholder:text-muted-foreground font-sans border border-border/60 overflow-y-auto"
             rows={4}
           />

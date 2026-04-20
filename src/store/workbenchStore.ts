@@ -107,7 +107,7 @@ export interface TerminalTab {
   output: string[];
 }
 
-export type AppMode = 'ask' | 'plan' | 'build' | 'chat' | 'agent' | 'web';
+export type AppMode = 'ask' | 'plan' | 'build' | 'chat' | 'agent';
 
 /** Reserved center tab id for the execution plan (not a file path). */
 export const CENTER_TAB_PLAN = ':plan';

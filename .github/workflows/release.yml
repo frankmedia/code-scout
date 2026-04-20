@@ -39,9 +39,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: ${{ matrix.target }}
+          toolchain: stable
+          target: ${{ matrix.target }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -83,9 +84,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: x86_64-pc-windows-msvc
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -93,8 +95,9 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
+        shell: bash
         run: |
-          rm -rf node_modules
+          rm -rf node_modules || true
           npm install
           
       - name: Test frontend build
@@ -143,9 +146,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: x86_64-unknown-linux-gnu
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2

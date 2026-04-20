@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.20"
+version = "0.1.21"
 description = "Code Scout — AI coding assistant"
 authors = ["Code Scout"]
 license = ""

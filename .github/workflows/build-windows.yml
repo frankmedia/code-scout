@@ -66,4 +66,4 @@ jobs:
           releaseDraft: true
           prerelease: true
           includeUpdaterJson: false
-          args: --target x86_64-pc-windows-msvc
+          args: --target x86_64-pc-windows-msvc --config src-tauri/tauri.nosidecar.conf.json --config src-tauri/tauri.release.conf.json

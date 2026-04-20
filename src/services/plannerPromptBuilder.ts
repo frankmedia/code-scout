@@ -172,7 +172,15 @@ export function buildSystemPrompt(
     ? buildProjectIdentityBlock(projectIdentity, projectName, scaffoldPrompt)
     : (scaffoldPrompt ? `\n## Project Scaffold Reference\n${scaffoldPrompt}\n` : '');
 
+  // Current date for context
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const year = now.getFullYear();
+
   return `You are Code Scout AI, an expert coding assistant in **Agent** mode. You decide how to help.
+
+**TODAY'S DATE:** ${dateStr} | **CURRENT YEAR:** ${year}
+Use the current year when searching for documentation, packages, or information.
 
 **When to reply in plain text:** If the user is chatting, greeting, asking a quick question, or the message is not a concrete coding task for this project, answer naturally in normal prose (markdown allowed). Do not wrap that reply in JSON.
 

@@ -23,79 +23,73 @@ const WebSocket = require('ws');
 const PORT = process.env.BROWSER_AGENT_PORT || 9222;
 
 let browser = null;
+let context = null;
 let page = null;
 
 async function handleCommand(cmd) {
   try {
     switch (cmd.type) {
       case 'launch': {
-        // Check if browser is actually still running (not just the variable)
-        if (browser) {
+        // Check if browser is actually still running
+        if (browser && page) {
           try {
-            // Test if browser is responsive
-            const pages = browser.contexts().flatMap(c => c.pages());
-            if (pages.length > 0) {
-              return { success: true, message: 'Browser already running' };
-            }
+            await page.title(); // Test if page is responsive
+            return { success: true, message: 'Browser already running' };
           } catch {
-            // Browser crashed or was closed externally - clean up
             console.log('[BrowserAgent] Browser not responsive, restarting...');
-            browser = null;
-            page = null;
+            try { await browser.close(); } catch {}
+            browser = null; context = null; page = null;
           }
         }
+        
+        // Launch fresh browser
         browser = await chromium.launch({
           headless: cmd.headless ?? false,
-          args: [
-            '--start-maximized',
-            '--force-dark-mode',
-            '--enable-features=WebContentsForceDark:inversion_method/cielab_based',
-          ],
+          args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
         });
-        const context = await browser.newContext({
+        context = await browser.newContext({
           viewport: { width: 1280, height: 800 },
-          colorScheme: 'dark',
-          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) CodeScout-Browser/1.0',
+          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         });
         page = await context.newPage();
 
-        // Inject super dark theme CSS into every page
+        // Inject Code Scout identifier banner into every page
         await page.addInitScript(() => {
           const style = document.createElement('style');
           style.id = 'codescout-dark-theme';
           style.textContent = `
-            /* Code Scout Dark Browser Theme */
-            :root {
-              color-scheme: dark !important;
+            /* Code Scout Browser - Animated banner */
+            @keyframes codescout-pulse {
+              0%, 100% { opacity: 1; background-position: 0% 50%; }
+              50% { opacity: 0.85; background-position: 100% 50%; }
             }
-            html {
-              filter: invert(0.92) hue-rotate(180deg) !important;
-              background: #0a0a0a !important;
+            @keyframes codescout-glow {
+              0%, 100% { text-shadow: 0 0 10px #00d4ff, 0 0 20px #00d4ff40; }
+              50% { text-shadow: 0 0 15px #00d4ff, 0 0 30px #00d4ff60, 0 0 40px #00d4ff30; }
             }
-            img, video, picture, canvas, svg, [style*="background-image"] {
-              filter: invert(1) hue-rotate(180deg) !important;
-            }
-            /* Code Scout identifier bar */
             body::before {
-              content: '🤖 Code Scout Browser';
+              content: '🤖 CODE SCOUT BROWSER — AI Controlled';
               position: fixed;
               top: 0;
               left: 0;
               right: 0;
-              background: linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+              z-index: 2147483647;
+              background: linear-gradient(90deg, #0f0f23 0%, #1a1a3e 25%, #16213e 50%, #1a1a3e 75%, #0f0f23 100%);
+              background-size: 200% 200%;
               color: #00d4ff;
               font-family: system-ui, -apple-system, sans-serif;
-              font-size: 11px;
-              font-weight: 600;
-              padding: 3px 12px;
-              z-index: 2147483647;
+              font-size: 14px;
+              font-weight: 700;
+              padding: 8px 16px;
               text-align: center;
-              letter-spacing: 0.5px;
-              border-bottom: 1px solid #00d4ff33;
-              box-shadow: 0 2px 8px rgba(0, 212, 255, 0.15);
+              letter-spacing: 2px;
+              text-transform: uppercase;
+              border-bottom: 2px solid #00d4ff;
+              box-shadow: 0 4px 20px rgba(0,212,255,0.3), inset 0 -1px 0 rgba(0,212,255,0.2);
+              animation: codescout-pulse 3s ease-in-out infinite, codescout-glow 2s ease-in-out infinite;
             }
             body {
-              padding-top: 24px !important;
+              padding-top: 38px !important;
             }
           `;
           if (document.head) {
@@ -103,6 +97,18 @@ async function handleCommand(cmd) {
           } else {
             document.addEventListener('DOMContentLoaded', () => document.head.appendChild(style));
           }
+          
+          // Prepend "Scout: " to page title
+          const updateTitle = () => {
+            if (document.title && !document.title.startsWith('Scout: ')) {
+              document.title = 'Scout: ' + document.title;
+            }
+          };
+          updateTitle();
+          new MutationObserver(updateTitle).observe(
+            document.querySelector('title') || document.head,
+            { subtree: true, childList: true, characterData: true }
+          );
         });
 
         return { success: true, message: 'Browser launched with Code Scout dark theme' };
@@ -117,20 +123,60 @@ async function handleCommand(cmd) {
 
       case 'click': {
         if (!page) return { success: false, error: 'No browser running' };
-        // Try multiple selector strategies
-        const selector = cmd.selector;
-        try {
-          await page.click(selector, { timeout: 5000 });
-          return { success: true, message: `Clicked: ${selector}` };
-        } catch (e) {
-          // Try by text content
-          try {
-            await page.getByText(selector, { exact: false }).first().click({ timeout: 5000 });
-            return { success: true, message: `Clicked text: ${selector}` };
-          } catch {
-            return { success: false, error: `Could not find element: ${selector}` };
+        const sel = cmd.selector;
+        
+        // Strategy 1: Exact CSS selector
+        try { await page.click(sel, { timeout: 3000 }); return { success: true, message: 'Clicked: ' + sel }; } catch {}
+        
+        // Strategy 2: Text content (button, link, span with text)
+        try { await page.getByText(sel, { exact: false }).first().click({ timeout: 3000 }); return { success: true, message: 'Clicked text: ' + sel }; } catch {}
+        
+        // Strategy 3: Button/link by role with name
+        try { await page.getByRole('button', { name: sel }).first().click({ timeout: 3000 }); return { success: true, message: 'Clicked button role: ' + sel }; } catch {}
+        try { await page.getByRole('link', { name: sel }).first().click({ timeout: 3000 }); return { success: true, message: 'Clicked link role: ' + sel }; } catch {}
+        
+        // Strategy 4: Common cookie consent patterns (Google, etc.)
+        const cookiePatterns = [
+          'Accept all', 'Accept All', 'ACCEPT ALL', 'Acepto todo', 'Alle akzeptieren',
+          'Reject all', 'Reject All', 'REJECT ALL', 'Rechazar todo',
+          'I agree', 'Agree', 'OK', 'Got it', 'Allow all', 'Allow All',
+        ];
+        if (cookiePatterns.some(p => sel.toLowerCase().includes(p.toLowerCase()))) {
+          // Try multiple selector strategies for cookie buttons
+          const cookieSelectors = [
+            'button[id*="accept"]', 'button[id*="Accept"]', 'button[id*="agree"]',
+            'button[id*="consent"]', 'button[id*="cookie"]',
+            '[aria-label*="Accept"]', '[aria-label*="accept"]',
+            '[data-testid*="accept"]', '[data-testid*="consent"]',
+            'form[action*="consent"] button', 'div[id*="consent"] button',
+            '#L2AGLb', // Google's Accept button ID
+            'button.tHlp8d', // Google cookie button class
+            'div.QS5gu button', // Another Google pattern
+          ];
+          for (const cssSel of cookieSelectors) {
+            try { await page.click(cssSel, { timeout: 2000 }); return { success: true, message: 'Clicked cookie button: ' + cssSel }; } catch {}
           }
         }
+        
+        // Strategy 5: JavaScript click as last resort
+        try {
+          const clicked = await page.evaluate((selector) => {
+            let el = document.querySelector(selector);
+            if (!el) {
+              const allEls = document.querySelectorAll('button, a, [role="button"], input[type="submit"]');
+              for (const e of allEls) {
+                if (e.textContent?.toLowerCase().includes(selector.toLowerCase())) {
+                  el = e; break;
+                }
+              }
+            }
+            if (el) { el.click(); return true; }
+            return false;
+          }, sel);
+          if (clicked) return { success: true, message: 'JS clicked: ' + sel };
+        } catch {}
+        
+        return { success: false, error: 'Could not find clickable element: ' + sel };
       }
 
       case 'fill': {
@@ -616,10 +662,118 @@ async function handleCommand(cmd) {
         };
       }
 
+      case 'accept_cookies': {
+        if (!page) return { success: false, error: 'No browser running' };
+        
+        // First, try to find and click in any iframes (Google consent is often in iframe)
+        const frames = page.frames();
+        for (const frame of frames) {
+          try {
+            // Google consent iframe selectors
+            const googleSelectors = [
+              'button[aria-label="Accept all"]',
+              'button[aria-label="Alle akzeptieren"]',
+              'button[aria-label="Aceptar todo"]',
+              '#L2AGLb',
+              'button:has-text("Accept all")',
+              'button:has-text("I agree")',
+              'div[role="dialog"] button:first-of-type',
+            ];
+            for (const sel of googleSelectors) {
+              try {
+                const btn = frame.locator(sel).first();
+                if (await btn.isVisible({ timeout: 500 })) {
+                  await btn.click({ timeout: 2000 });
+                  return { success: true, message: 'Accepted cookies in frame: ' + sel };
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+        
+        // Try main page strategies
+        const strategies = [
+          // Google - various regional button IDs and classes
+          { sel: '#L2AGLb', desc: 'Google Accept ID' },
+          { sel: '#W0wltc', desc: 'Google Reject ID' },
+          { sel: 'button.tHlp8d', desc: 'Google button class' },
+          { sel: 'div.QS5gu button:first-child', desc: 'Google consent div' },
+          { sel: '[data-ved] button:first-of-type', desc: 'Google data-ved' },
+          { sel: 'form[action*="consent"] button', desc: 'Google consent form' },
+          { sel: 'div[role="dialog"] button', desc: 'Dialog button' },
+          // Common IDs
+          { sel: '#onetrust-accept-btn-handler', desc: 'OneTrust' },
+          { sel: '#accept-recommended-btn-handler', desc: 'OneTrust recommended' },
+          { sel: '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', desc: 'Cookiebot' },
+          { sel: '.cc-accept-all', desc: 'Cookie Consent' },
+          { sel: '[data-testid="cookie-policy-manage-dialog-btn-accept"]', desc: 'TestID accept' },
+          { sel: 'button[aria-label*="Accept"]', desc: 'Aria accept' },
+        ];
+        
+        for (const s of strategies) {
+          try {
+            const el = page.locator(s.sel).first();
+            if (await el.isVisible({ timeout: 500 })) {
+              await el.click({ timeout: 2000 });
+              return { success: true, message: 'Accepted cookies via: ' + s.desc };
+            }
+          } catch {}
+        }
+        
+        // Try by role
+        const roleNames = ['Accept all', 'Accept All', 'Allow all', 'Alle akzeptieren', 'Aceptar todo', 'I agree', 'Agree', 'OK'];
+        for (const name of roleNames) {
+          try {
+            const btn = page.getByRole('button', { name, exact: false }).first();
+            if (await btn.isVisible({ timeout: 500 })) {
+              await btn.click({ timeout: 2000 });
+              return { success: true, message: 'Accepted cookies via role: ' + name };
+            }
+          } catch {}
+        }
+        
+        // JavaScript fallback - find any visible button with accept-like text
+        try {
+          const clicked = await page.evaluate(() => {
+            const acceptTerms = ['accept', 'agree', 'allow', 'consent', 'ok', 'got it', 'akzeptieren', 'aceptar'];
+            const buttons = document.querySelectorAll('button, [role="button"]');
+            for (const btn of buttons) {
+              const text = (btn.textContent || '').toLowerCase();
+              const visible = btn.offsetParent !== null && getComputedStyle(btn).display !== 'none';
+              if (visible && acceptTerms.some(term => text.includes(term))) {
+                btn.click();
+                return btn.textContent?.trim() || 'unknown';
+              }
+            }
+            // Also check iframes
+            const iframes = document.querySelectorAll('iframe');
+            for (const iframe of iframes) {
+              try {
+                const doc = iframe.contentDocument;
+                if (!doc) continue;
+                const btns = doc.querySelectorAll('button, [role="button"]');
+                for (const btn of btns) {
+                  const text = (btn.textContent || '').toLowerCase();
+                  if (acceptTerms.some(term => text.includes(term))) {
+                    btn.click();
+                    return 'iframe: ' + (btn.textContent?.trim() || 'unknown');
+                  }
+                }
+              } catch {}
+            }
+            return null;
+          });
+          if (clicked) return { success: true, message: 'JS clicked: ' + clicked };
+        } catch {}
+        
+        return { success: false, error: 'No cookie consent banner found or could not click accept button' };
+      }
+
       case 'close': {
         if (browser) {
           await browser.close();
           browser = null;
+          context = null;
           page = null;
         }
         return { success: true, message: 'Browser closed' };

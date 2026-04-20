@@ -10,9 +10,13 @@ import TerminalPanel from '@/components/workbench/TerminalPanel';
 import ModelSettings from '@/components/workbench/ModelSettings';
 import SessionSidebar from '@/components/workbench/SessionSidebar';
 import BenchmarkPanel from '@/components/workbench/BenchmarkPanel';
+import WebPanel from '@/components/workbench/WebPanel';
 import ProjectLauncher from '@/pages/ProjectLauncher';
 import WelcomeScreen from '@/pages/WelcomeScreen';
 import { useWorkbenchStore, CENTER_TAB_PLAN, CENTER_TAB_BENCHMARK } from '@/store/workbenchStore';
+import { useModeStore } from '@/store/modeStore';
+
+const CENTER_TAB_WEB = ':web';
 import { useProjectStore } from '@/store/projectStore';
 import { useChatHistoryStore } from '@/store/chatHistoryStore';
 import { syncWorkbenchRootFromActiveProject } from '@/lib/syncWorkbenchFromProject';
@@ -41,6 +45,7 @@ const Index = () => {
     closePlanTab,
   } = useWorkbenchStore();
   const activeProjectId = useProjectStore(s => s.activeProjectId);
+  const webModeEnabled = useModeStore(s => s.webModeEnabled);
   const hydrateWorkbenchForProject = useChatHistoryStore(s => s.hydrateWorkbenchForProject);
   const chatHistoryHydrated = useChatHistoryStore(s => s._hasHydrated);
   const lastHydratedProjectRef = useRef<string | null>(null);
@@ -159,8 +164,8 @@ const Index = () => {
               </div>
             )}
 
-            {/* File tabs */}
-            {openFiles.map(filePath => {
+            {/* File tabs — exclude reserved tab identifiers */}
+            {openFiles.filter(f => !f.startsWith(':')).map(filePath => {
               const name = filePath.split('/').pop() || filePath;
               const isActive = activeCenterTab === filePath;
               return (
@@ -198,6 +203,11 @@ const Index = () => {
                 <PlanTabPanel />
               </div>
             )}
+            {activeCenterTab === CENTER_TAB_WEB && webModeEnabled && (
+              <div className="absolute inset-0">
+                <WebPanel />
+              </div>
+            )}
             {activeCenterTab === CENTER_TAB_BENCHMARK && (
               <div className="absolute inset-0 z-10 flex flex-col bg-card">
                 <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-panel shrink-0">
@@ -216,7 +226,7 @@ const Index = () => {
                 </div>
               </div>
             )}
-            {activeCenterTab !== 'chat' && activeCenterTab !== CENTER_TAB_PLAN && activeCenterTab !== CENTER_TAB_BENCHMARK && (
+            {activeCenterTab !== 'chat' && activeCenterTab !== CENTER_TAB_PLAN && activeCenterTab !== CENTER_TAB_WEB && activeCenterTab !== CENTER_TAB_BENCHMARK && (
               <div className="absolute inset-0">
                 <EditorPanel />
               </div>

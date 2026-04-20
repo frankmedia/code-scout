@@ -10,12 +10,12 @@
 import { useWorkbenchStore, PlanStep, Plan } from '@/store/workbenchStore';
 import { useModelStore, ModelConfig } from '@/store/modelStore';
 import { verifyStep, VerificationInput, VerificationResult } from './verifierAgent';
-import { executeCommand } from '@/lib/tauri';
 import {
   resolveProjectRoot,
   formatValidationFailure,
   ValidationRunResult,
   collectProjectConfigHints,
+  normalizeValidationCommand,
 } from './validationRunner';
 import { requestRepairFix, RepairFix } from './repairAgent';
 import type { EnvironmentInfo } from './environmentProbe';
@@ -70,6 +70,7 @@ import {
 
 import type { ProjectIdentity } from './planGenerator';
 import { buildScaffoldHint } from './scaffoldRegistry';
+import { executeRepairCommand } from './agentExecutorPort';
 
 // ─── Re-exports (keep consumers working) ───────────────────────────────────
 // These symbols were previously exported from this file. Consumers still
@@ -409,7 +410,12 @@ export async function executePlan(
         f.path?.endsWith('/package-lock.json') || f.path?.endsWith('/bun.lockb') || f.path?.endsWith('/yarn.lock')
       ),
       projectPath: repairPP ?? '',
-      originalCommand: step.command ?? validation.command,
+      originalCommand:
+        normalizeValidationCommand(
+          step.command ?? validation.command ?? '',
+          (p) => useWorkbenchStore.getState().getFileContent(p),
+          repairFiles,
+        ) || step.command || validation.command,
     };
     // Track search source count for progress scoring
     let _searchSourcesAdded = 0;
@@ -447,15 +453,15 @@ export async function executePlan(
 
           const cmdActId = callbacks.onActivity?.('repairing', `[${action.strategyId}]: ${action.command.slice(0, 60)}`, '');
 
-          let repairResult: Awaited<ReturnType<typeof executeCommand>> | null = null;
+          let repairResult: Awaited<ReturnType<typeof executeRepairCommand>> | null = null;
           try {
-            // Prepend env vars as KEY=VALUE prefix (executeCommand doesn't accept an env param)
+            // Prepend env vars as KEY=VALUE prefix because shell commands are passed as a single string.
             const envPrefix = action.env
               ? Object.entries(action.env).map(([k, v]) => `${k}=${v}`).join(' ') + ' '
               : '';
             const fullCmd = envPrefix + action.command;
             await withProjectLock(repairContext.projectPath, async () => {
-              repairResult = await executeCommand(fullCmd, repairContext.projectPath);
+              repairResult = await executeRepairCommand(fullCmd, repairContext.projectPath);
             });
           } catch (e) {
             repairResult = { code: 1, stdout: '', stderr: e instanceof Error ? e.message : String(e) };
@@ -768,11 +774,40 @@ export async function executePlan(
 
           // Include component file listing for import-related errors
           let componentListing = '';
-          const componentFiles = flattenAllFilesCapped(ws.files, () => {})
-            .filter(f => /component/i.test(f.path) || /^(src\/)?components\//.test(f.path))
-            .map(f => f.path);
+          const allProjectFiles = flattenAllFilesCapped(ws.files, () => {}).map(f => f.path);
+          const componentFiles = allProjectFiles
+            .filter(p => {
+              const normalized = p.replace(/\\/g, '/');
+              return /component/i.test(normalized) || /(^|\/)components\//.test(normalized) || /(^|\/)app\//.test(normalized);
+            });
           if (componentFiles.length > 0) {
             componentListing = `\n\nCOMPONENT FILES THAT ACTUALLY EXIST:\n${componentFiles.join('\n')}`;
+          }
+
+          // Extract "Module not found" targets and identify which are truly missing
+          const moduleNotFoundMatches = allErrors.matchAll(/(?:Module not found|Can't resolve)[^\n]*['"]([^'"]+)['"]/gi);
+          const missingModules: string[] = [];
+          for (const match of moduleNotFoundMatches) {
+            const target = match[1];
+            // Skip node_modules packages
+            if (!target.startsWith('.') && !target.startsWith('@/') && !target.startsWith('~/')) continue;
+            // Normalize the import path to a likely file path
+            const likelyPaths = [
+              target.replace(/^@\//, '').replace(/^~\//, ''),
+              target.replace(/^@\//, '').replace(/^~\//, '') + '.tsx',
+              target.replace(/^@\//, '').replace(/^~\//, '') + '.ts',
+              target.replace(/^@\//, '').replace(/^~\//, '') + '/index.tsx',
+            ];
+            const exists = likelyPaths.some(lp =>
+              allProjectFiles.some(pf => pf.replace(/\\/g, '/').endsWith(lp))
+            );
+            if (!exists) {
+              missingModules.push(target);
+            }
+          }
+          let missingFilesHint = '';
+          if (missingModules.length > 0) {
+            missingFilesHint = `\n\n⚠️ FILES THAT DO NOT EXIST (must be created with create_file):\n${[...new Set(missingModules)].join('\n')}`;
           }
 
           try {
@@ -780,7 +815,7 @@ export async function executePlan(
             const newSteps = await requestOrchestratorReplanning({
               step,
               attemptCount: attempt,
-              errorSummary: allErrors.slice(0, 4000) + fileContent + componentListing,
+              errorSummary: allErrors.slice(0, 4000) + missingFilesHint + fileContent + componentListing,
               attemptHistory: ledger.attempts.map(a =>
                 `[${a.strategyId}] ${a.command?.slice(0, 100) ?? 'edit'} → ${a.result}: ${a.errorSnippet?.slice(0, 150) ?? 'ok'}`,
               ),
@@ -801,6 +836,10 @@ export async function executePlan(
                   status: 'pending',
                   path: replanStep.path,
                   command: replanStep.command,
+                  content: replanStep.content,
+                  diff: replanStep.action === 'edit_file'
+                    ? { before: replanStep.before ?? '', after: replanStep.after ?? '' }
+                    : undefined,
                 };
                 callbacks.onLog(`Orchestrator fix: ${fixStep.description}`, 'info');
                 callbacks.onTerminal(`> Orchestrator fix: ${fixStep.description}`);
@@ -841,7 +880,10 @@ export async function executePlan(
       break;
     }
 
-    useWorkbenchStore.getState().updatePlanStep(step.id, { status: 'running' });
+    // Clear "repairing" only on success — avoid flashing "running" before we mark the step failed.
+    if (validation.pass) {
+      useWorkbenchStore.getState().updatePlanStep(step.id, { status: 'running' });
+    }
 
     // If user chose to skip this step, record it and move on
     if (skipCurrentStep) {

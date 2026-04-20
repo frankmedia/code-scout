@@ -26,15 +26,12 @@ import {
 } from './agentExecutorCodeGen';
 import { executeWebSearch, executeFetchUrl, executeBrowseWeb } from './agentExecutorWebResearch';
 import { appendShellCommandHints, sanitizeRmCommaSeparatedPaths } from './agentExecutorUtils';
+import { executeBrowserAction, isBrowserAction } from './browserExecutor';
+import { useModeStore } from '@/store/modeStore';
 import { detectDevServerPort, freePortIfOccupied } from './agentExecutorPort';
+import { getForegroundCommandTimeoutMs } from './agentCommandTimeouts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
-
-/** Max time (ms) to wait for a normal command before considering it timed out. */
-const CMD_TIMEOUT_MS = 120_000;
-
-/** Repo-wide grep/rg/git-grep can walk huge trees — fail faster so the UI returns to the user. */
-const SEARCH_CMD_TIMEOUT_MS = 45_000;
 
 /** For background commands, wait this long to collect initial output then move on. */
 const BACKGROUND_SETTLE_MS = 5_000;
@@ -72,7 +69,9 @@ export async function executeCreateFile(
 
   const actId = callbacks.onActivity?.('creating_file', `Creating ${path}`, step.description.slice(0, 80));
 
-  if (model) {
+  if (typeof step.content === 'string') {
+    content = step.content;
+  } else if (model) {
     callbacks.onLog(`Generating code for ${path}...`, 'info');
     const fileHints = buildFileHints(path);
     const siblingCtx = gatherSiblingContext(path, (p) => store.getFileContent(p), flattenAllFiles(store.files));
@@ -484,11 +483,7 @@ export async function executeRunCommand(
   }
 
   // Normal (foreground) command with timeout (shorter for plain repo search — avoids “stuck forever” UX)
-  const trimmedCmd = resolvedCommand.trim();
-  const isRepoSearch =
-    /^(?:git\s+grep|grep|rg|ack|ag)\b/i.test(trimmedCmd) &&
-    !/^(npm|yarn|pnpm|bun|cargo|go|python|pip)\b/i.test(trimmedCmd);
-  const cmdTimeoutMs = isRepoSearch ? SEARCH_CMD_TIMEOUT_MS : CMD_TIMEOUT_MS;
+  const cmdTimeoutMs = getForegroundCommandTimeoutMs(resolvedCommand);
 
   const abortPromise = new Promise<never>((_, reject) => {
     const s = callbacks.signal;
@@ -499,13 +494,7 @@ export async function executeRunCommand(
   });
 
   const result = await Promise.race([
-    executeCommand(resolvedCommand, effectivePath),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Command timed out after ${cmdTimeoutMs / 1000}s: ${command}`)),
-        cmdTimeoutMs,
-      ),
-    ),
+    executeCommand(resolvedCommand, effectivePath, { timeoutMs: cmdTimeoutMs, signal: callbacks.signal }),
     abortPromise,
   ]);
 
@@ -543,10 +532,11 @@ export async function executeRunCommand(
       if (fixedCmd !== resolvedCommand && fixedCmd.trim().length > 0) {
         callbacks.onLog(`Auto-fix: "cd ${badDir}" doesn't exist (already in project root). Retrying without it.`, 'info');
         callbacks.onTerminal(`⚙ Retrying: ${fixedCmd}`);
+        const retryTimeoutMs = getForegroundCommandTimeoutMs(fixedCmd);
         const retryResult = await Promise.race([
-          executeCommand(fixedCmd, effectivePath),
+          executeCommand(fixedCmd, effectivePath, { timeoutMs: retryTimeoutMs }),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Command timed out after ${CMD_TIMEOUT_MS / 1000}s`)), CMD_TIMEOUT_MS),
+            setTimeout(() => reject(new Error(`Command timed out after ${Math.round(retryTimeoutMs / 1000)}s`)), retryTimeoutMs),
           ),
         ]);
         if (retryResult.stdout) retryResult.stdout.split('\n').filter(Boolean).forEach(l => {
@@ -695,6 +685,41 @@ export async function executeStepAction(
     case 'browse_web':
       await executeBrowseWeb(step, coderModel, callbacks);
       break;
+
+    // Browser automation actions
+    case 'browser_launch':
+    case 'browser_goto':
+    case 'browser_click':
+    case 'browser_fill':
+    case 'browser_extract':
+    case 'browser_screenshot':
+    case 'browser_scroll':
+    case 'browser_wait':
+    case 'browser_close': {
+      const browserResult = await executeBrowserAction(step, callbacks.onLog);
+      if (browserResult.success) {
+        callbacks.onTerminal(`✅ ${browserResult.output}`);
+        // Update browser state in store
+        const modeStore = useModeStore.getState();
+        if (step.action === 'browser_launch') {
+          modeStore.setBrowserActive(true);
+        } else if (step.action === 'browser_goto' && browserResult.url) {
+          modeStore.setCurrentBrowserUrl(browserResult.url);
+          modeStore.setCurrentBrowserTitle(browserResult.title ?? null);
+        } else if (step.action === 'browser_close') {
+          modeStore.setBrowserActive(false);
+          modeStore.setCurrentBrowserUrl(null);
+          modeStore.setCurrentBrowserTitle(null);
+        } else if (step.action === 'browser_screenshot' && browserResult.screenshot) {
+          modeStore.setLastScreenshot(browserResult.screenshot);
+        }
+      } else {
+        callbacks.onTerminal(`❌ ${browserResult.output}`);
+        throw new Error(browserResult.output);
+      }
+      break;
+    }
+
     default:
       throw new Error(`Unknown action: ${step.action}`);
   }

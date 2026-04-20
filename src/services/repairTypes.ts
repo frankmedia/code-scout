@@ -118,6 +118,10 @@ export interface RepairLedger {
   lastFingerprint: string | null;
   /** How many consecutive zero-progress rounds have occurred */
   zeroProgressRounds: number;
+  /** How many consecutive same-category (but different error) rounds have occurred */
+  sameCategoryRounds: number;
+  /** Last failure category seen — for category-level stuck detection */
+  lastCategory: FailureCategory | null;
 }
 
 /**

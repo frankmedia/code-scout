@@ -6,13 +6,11 @@
 
 import { executeCommand } from '@/lib/tauri';
 import { isBackgroundCommand } from './pathResolution';
+import { getLongRunningCommandTimeoutMs } from './agentCommandTimeouts';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const BACKGROUND_SETTLE_MS_EXPORT = 6_000;
-
-/** Repair / LLM-applied shell fixes can run longer installs — still must not hang forever. */
-const REPAIR_CMD_TIMEOUT_MS = 900_000; // 15 minutes
 
 // ─── Dev server port detection ──────────────────────────────────────────────
 
@@ -118,16 +116,7 @@ export async function executeRepairCommand(
   cmd: string,
   cwd: string | undefined,
 ): Promise<Awaited<ReturnType<typeof executeCommand>>> {
-  return Promise.race([
-    executeCommand(cmd, cwd),
-    new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(
-          new Error(
-            `Repair command timed out after ${REPAIR_CMD_TIMEOUT_MS / 60_000} minutes (process may still be running).`,
-          ),
-        );
-      }, REPAIR_CMD_TIMEOUT_MS);
-    }),
-  ]);
+  return executeCommand(cmd, cwd, {
+    timeoutMs: getLongRunningCommandTimeoutMs(),
+  });
 }

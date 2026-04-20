@@ -1,0 +1,15 @@
+{
+  "name": "code-scout-browser-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright browser automation sidecar for Code Scout",
+  "main": "browser-agent.js",
+  "scripts": {
+    "start": "node browser-agent.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.52.0",
+    "ws": "^8.18.0"
+  }
+}

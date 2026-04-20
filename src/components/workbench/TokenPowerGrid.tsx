@@ -73,6 +73,8 @@ const TokenPowerGrid: React.FC = () => {
   const lastSpeedRef = useRef<number | null>(null);
   if (aiLiveTokPerSec !== null) lastSpeedRef.current = aiLiveTokPerSec;
   const aiSessionTotal  = useWorkbenchStore(s => s.aiSessionTotalTokens);
+  const aiSessionOrch   = useWorkbenchStore(s => s.aiSessionOrchestratorTokens);
+  const aiSessionCoder  = useWorkbenchStore(s => s.aiSessionCoderTokens);
   const aiSessionStart  = useWorkbenchStore(s => s.aiSessionStartTime);
   const aiContextUsed   = useWorkbenchStore(s => s.aiContextUsed);
   const aiContextLimit  = useWorkbenchStore(s => s.aiContextLimit);
@@ -200,6 +202,34 @@ const TokenPowerGrid: React.FC = () => {
               total tokens
             </span>
           </div>
+
+          {/* Orchestrator vs Coder breakdown */}
+          {(aiSessionOrch > 0 || aiSessionCoder > 0) && (
+            <div className="flex justify-center gap-4 py-1">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">
+                    Orchestrator
+                  </span>
+                  <span className="text-[11px] font-mono tabular-nums text-amber-400">
+                    {fmt(aiSessionOrch)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-cyan-500" />
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-mono uppercase tracking-wider text-muted-foreground">
+                    Coder
+                  </span>
+                  <span className="text-[11px] font-mono tabular-nums text-cyan-400">
+                    {fmt(aiSessionCoder)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Context window bar */}
           {aiContextLimit > 0 && (

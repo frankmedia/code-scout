@@ -163,7 +163,7 @@ Respond with ONLY valid JSON:
       (text) => {
         if (!gotTokens) {
           const est = Math.ceil(prompt.length / 4) + Math.ceil((text || fullText).length / 4);
-          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est, 'coder');
         }
         try {
           const match = text.match(/\{[\s\S]*\}/);
@@ -202,7 +202,7 @@ Respond with ONLY valid JSON:
       (usage) => {
         gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total, 'coder');
       },
     );
   });

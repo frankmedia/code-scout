@@ -14,7 +14,8 @@
         { "name": "zsh",  "cmd": "zsh",  "args": true, "sidecar": false },
         { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },
         { "name": "pwsh", "cmd": "pwsh", "args": true, "sidecar": false },
-        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false }
+        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false },
+        { "name": "node", "cmd": "node", "args": true, "sidecar": false }
       ]
     },
     {
@@ -25,7 +26,8 @@
         { "name": "zsh",  "cmd": "zsh",  "args": true, "sidecar": false },
         { "name": "powershell", "cmd": "powershell", "args": true, "sidecar": false },
         { "name": "pwsh", "cmd": "pwsh", "args": true, "sidecar": false },
-        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false }
+        { "name": "cmd",  "cmd": "cmd",  "args": true, "sidecar": false },
+        { "name": "node", "cmd": "node", "args": true, "sidecar": false }
       ]
     },
     "shell:allow-kill",

@@ -236,14 +236,17 @@ Rules:
 - diff is required for edit_file actions — show the specific lines changing
 - diff is NOT needed for create_file or delete_file
 - Order steps logically (create before edit, install before use)
+- **Component ordering (CRITICAL for React/Next.js projects)**: Always create reusable components BEFORE pages that import them. For example, if \`app/page.tsx\` imports \`@/components/Header\`, create \`components/Header.tsx\` FIRST, then create \`app/page.tsx\`. Never create a page file that imports a component that doesn't exist yet.
+- **Import/filename casing (CRITICAL)**: Import paths MUST exactly match the actual filename casing. If file is \`Header.tsx\`, import as \`@/components/Header\`. If file is \`header.tsx\`, import as \`@/components/header\`. Mismatched casing causes "Module not found" on Linux and Webpack casing warnings on macOS. Pick one convention and use it consistently across ALL component files and imports.
+- **Export consistency (CRITICAL for Next.js)**: For React components in \`components/\` folders, ALWAYS use named exports: \`export function Header() { ... }\` or \`export const Header = () => { ... }\`. Then import with \`import { Header } from '@/components/Header'\`. This prevents default/named export mismatch errors. For Next.js page/layout files in \`app/\`, use \`export default function\` as required by Next.js.
 - Keep plans small: prefer 1-3 steps per plan; at most 8 steps. One focused change per step.
 - PREFER MODULAR FILES (CRITICAL for small LLM compatibility): Split features across multiple small files. Keep every file under 200 lines. Never put multiple components, hooks, or utilities in the same file. One concern per file: one component, one hook, one utility module. Create separate files for components, hooks, utils, types, and styles, then import them. Files over 200 lines must be split. This keeps each file focused, reduces context usage, and prevents write errors from small models that struggle with large outputs.
-- **CSS/Tailwind setup (CRITICAL):** If the plan uses Tailwind CSS utility classes in any HTML or JSX file, the plan MUST include steps to set up the full Tailwind pipeline BEFORE writing components:
-  1. Include \`tailwindcss\` and build tooling in package.json devDependencies (\`@tailwindcss/vite\` for Tailwind v4 + Vite, or \`postcss\` + \`autoprefixer\` for v3).
-  2. For Tailwind v4 + Vite: create \`vite.config.ts\` with the \`@tailwindcss/vite\` plugin, and add \`@import "tailwindcss"\` in the main CSS file.
-  3. For Tailwind v3: create \`tailwind.config.js\` (with correct \`content\` globs), \`postcss.config.js\` (with tailwindcss + autoprefixer plugins), and add \`@tailwind base; @tailwind components; @tailwind utilities;\` to the main CSS file.
-  4. Ensure the main CSS file is imported in the entry point (\`main.tsx\` / \`main.ts\`).
-  NEVER write JSX/HTML with Tailwind classes if these config files are missing — the page will render with zero styling.
+- **CSS/Tailwind v4 setup (CRITICAL):** Tailwind CSS v4 uses a NEW configuration system. The old PostCSS plugin \`tailwindcss: {}\` NO LONGER WORKS.
+  - For Vite projects: use \`@tailwindcss/vite\` plugin in vite.config.ts
+  - For Next.js projects: use \`@tailwindcss/postcss\` in postcss.config.mjs: \`plugins: { "@tailwindcss/postcss": {} }\`
+  - CSS file: use \`@import "tailwindcss";\` (NOT the old \`@tailwind base; @tailwind components; @tailwind utilities;\`)
+  - No \`tailwind.config.js\` is required for basic usage in v4
+  NEVER use the old v3 pattern \`plugins: { tailwindcss: {}, autoprefixer: {} }\` — it causes "The PostCSS plugin has moved to a separate package" errors.
 - CRITICAL: File paths MUST exactly match the paths listed in the project context / file tree. If files are inside a subdirectory (e.g. "website/src/App.jsx"), you MUST include that prefix. Never guess paths — use the actual paths provided.
 - CRITICAL: Do NOT create a new project directory. Do NOT use "cd ${projectName}" in any run_command — the cwd is already "${projectName}". Using "cd ${projectName} && ..." fails with "No such file or directory". All paths are relative to the project root.
 - For edit_file, the "before" diff should reflect what actually exists in the file

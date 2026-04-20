@@ -13,6 +13,16 @@ import {
   DEFAULT_AGENT_HISTORY_MESSAGES,
   DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
 } from '@/config/agentBehaviorDefaults';
+import {
+  DEFAULT_FOREGROUND_COMMAND_TIMEOUT_MS,
+  DEFAULT_HTTP_TIMEOUT_MS,
+  DEFAULT_LONG_RUNNING_COMMAND_TIMEOUT_MS,
+  DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+  DEFAULT_MODEL_TOTAL_TIMEOUT_MS,
+  DEFAULT_ORCHESTRATOR_EVAL_TIMEOUT_MS,
+  DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS,
+  DEFAULT_SEARCH_COMMAND_TIMEOUT_MS,
+} from '@/config/runtimeTimeoutDefaults';
 
 export type AgentRole = 'orchestrator' | 'coder' | 'tester';
 export type ModelProvider =
@@ -112,6 +122,12 @@ interface ModelStoreState {
   agentMaxFileReadChars: number;
   agentHistoryMessages: number;
   agentBackgroundSettleMs: number;
+  agentCommandTimeoutMs: number;
+  agentSearchCommandTimeoutMs: number;
+  agentLongRunningCommandTimeoutMs: number;
+  modelRequestTotalTimeoutMs: number;
+  modelStreamIdleTimeoutMs: number;
+  requiredToolFirstTokenTimeoutMs: number;
   setAgentHeartbeatIntervalMs: (ms: number) => void;
   setAgentHeartbeatEnabled: (on: boolean) => void;
   setAgentStallWarningAfterMs: (ms: number) => void;
@@ -123,6 +139,12 @@ interface ModelStoreState {
   setAgentMaxFileReadChars: (n: number) => void;
   setAgentHistoryMessages: (n: number) => void;
   setAgentBackgroundSettleMs: (ms: number) => void;
+  setAgentCommandTimeoutMs: (ms: number) => void;
+  setAgentSearchCommandTimeoutMs: (ms: number) => void;
+  setAgentLongRunningCommandTimeoutMs: (ms: number) => void;
+  setModelRequestTotalTimeoutMs: (ms: number) => void;
+  setModelStreamIdleTimeoutMs: (ms: number) => void;
+  setRequiredToolFirstTokenTimeoutMs: (ms: number) => void;
   resetAgentLoopLimitsToDefaults: () => void;
 
   addModel: (model: Omit<ModelConfig, 'id'>, makeDefault?: boolean) => void;
@@ -181,6 +203,17 @@ const DEFAULT_MODELS: ModelConfig[] = [
   },
 ];
 
+const LEGACY_DEFAULTS = {
+  orchestratorTimeoutMs: 15_000,
+  httpTimeoutMs: 30_000,
+  agentCommandTimeoutMs: 120_000,
+  agentSearchCommandTimeoutMs: 45_000,
+  agentLongRunningCommandTimeoutMs: 900_000,
+  modelRequestTotalTimeoutMs: 15 * 60 * 1000,
+  modelStreamIdleTimeoutMs: 3 * 60 * 1000,
+  requiredToolFirstTokenTimeoutMs: 120_000,
+} as const;
+
 export const useModelStore = create<ModelStoreState>()(
   persist(
     (set, get) => ({
@@ -189,9 +222,9 @@ export const useModelStore = create<ModelStoreState>()(
       selectedChatModel: null,
       discoveryEndpoints: {},
       providerApiKeys: {},
-      orchestratorTimeoutMs: 15_000,
+      orchestratorTimeoutMs: DEFAULT_ORCHESTRATOR_EVAL_TIMEOUT_MS,
       setOrchestratorTimeout: (ms: number) => set({ orchestratorTimeoutMs: Math.max(5000, ms) }),
-      httpTimeoutMs: 30_000,
+      httpTimeoutMs: DEFAULT_HTTP_TIMEOUT_MS,
       setHttpTimeout: (ms: number) => set({ httpTimeoutMs: Math.max(5000, ms) }),
       stepOutputMaxChars: 6_000,
       setStepOutputMaxChars: (n: number) => set({ stepOutputMaxChars: Math.max(1000, n) }),
@@ -211,6 +244,12 @@ export const useModelStore = create<ModelStoreState>()(
       agentMaxFileReadChars: DEFAULT_AGENT_MAX_FILE_READ_CHARS,
       agentHistoryMessages: DEFAULT_AGENT_HISTORY_MESSAGES,
       agentBackgroundSettleMs: DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
+      agentCommandTimeoutMs: DEFAULT_FOREGROUND_COMMAND_TIMEOUT_MS,
+      agentSearchCommandTimeoutMs: DEFAULT_SEARCH_COMMAND_TIMEOUT_MS,
+      agentLongRunningCommandTimeoutMs: DEFAULT_LONG_RUNNING_COMMAND_TIMEOUT_MS,
+      modelRequestTotalTimeoutMs: DEFAULT_MODEL_TOTAL_TIMEOUT_MS,
+      modelStreamIdleTimeoutMs: DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+      requiredToolFirstTokenTimeoutMs: DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS,
       setAgentHeartbeatIntervalMs: (ms) => set({ agentHeartbeatIntervalMs: Math.max(0, ms) }),
       setAgentHeartbeatEnabled: (on) => set({ agentHeartbeatIntervalMs: on ? DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS : 0 }),
       setAgentStallWarningAfterMs: (ms) => set({ agentStallWarningAfterMs: Math.max(0, ms) }),
@@ -222,6 +261,12 @@ export const useModelStore = create<ModelStoreState>()(
       setAgentMaxFileReadChars: (n) => set({ agentMaxFileReadChars: Math.max(1000, n) }),
       setAgentHistoryMessages: (n) => set({ agentHistoryMessages: Math.max(1, n) }),
       setAgentBackgroundSettleMs: (ms) => set({ agentBackgroundSettleMs: Math.max(1000, ms) }),
+      setAgentCommandTimeoutMs: (ms) => set({ agentCommandTimeoutMs: Math.max(10_000, ms) }),
+      setAgentSearchCommandTimeoutMs: (ms) => set({ agentSearchCommandTimeoutMs: Math.max(5_000, ms) }),
+      setAgentLongRunningCommandTimeoutMs: (ms) => set({ agentLongRunningCommandTimeoutMs: Math.max(30_000, ms) }),
+      setModelRequestTotalTimeoutMs: (ms) => set({ modelRequestTotalTimeoutMs: Math.max(30_000, ms) }),
+      setModelStreamIdleTimeoutMs: (ms) => set({ modelStreamIdleTimeoutMs: Math.max(10_000, ms) }),
+      setRequiredToolFirstTokenTimeoutMs: (ms) => set({ requiredToolFirstTokenTimeoutMs: Math.max(10_000, ms) }),
       resetAgentLoopLimitsToDefaults: () => set({
         agentHeartbeatIntervalMs: DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
         agentStallWarningAfterMs: DEFAULT_AGENT_STALL_WARNING_AFTER_MS,
@@ -233,6 +278,12 @@ export const useModelStore = create<ModelStoreState>()(
         agentMaxFileReadChars: DEFAULT_AGENT_MAX_FILE_READ_CHARS,
         agentHistoryMessages: DEFAULT_AGENT_HISTORY_MESSAGES,
         agentBackgroundSettleMs: DEFAULT_AGENT_BACKGROUND_SETTLE_MS,
+        agentCommandTimeoutMs: DEFAULT_FOREGROUND_COMMAND_TIMEOUT_MS,
+        agentSearchCommandTimeoutMs: DEFAULT_SEARCH_COMMAND_TIMEOUT_MS,
+        agentLongRunningCommandTimeoutMs: DEFAULT_LONG_RUNNING_COMMAND_TIMEOUT_MS,
+        modelRequestTotalTimeoutMs: DEFAULT_MODEL_TOTAL_TIMEOUT_MS,
+        modelStreamIdleTimeoutMs: DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+        requiredToolFirstTokenTimeoutMs: DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS,
       }),
 
       addModel: (model, makeDefault) => {
@@ -399,6 +450,47 @@ export const useModelStore = create<ModelStoreState>()(
     }),
     {
       name: 'coder-scout-models',
+      version: 2,
+      migrate: (persistedState: unknown, version: number) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState;
+        const state = persistedState as Record<string, unknown>;
+        if (version >= 2) return state;
+        return {
+          ...state,
+          orchestratorTimeoutMs:
+            state.orchestratorTimeoutMs === LEGACY_DEFAULTS.orchestratorTimeoutMs || state.orchestratorTimeoutMs == null
+              ? DEFAULT_ORCHESTRATOR_EVAL_TIMEOUT_MS
+              : state.orchestratorTimeoutMs,
+          httpTimeoutMs:
+            state.httpTimeoutMs === LEGACY_DEFAULTS.httpTimeoutMs || state.httpTimeoutMs == null
+              ? DEFAULT_HTTP_TIMEOUT_MS
+              : state.httpTimeoutMs,
+          agentCommandTimeoutMs:
+            state.agentCommandTimeoutMs === LEGACY_DEFAULTS.agentCommandTimeoutMs || state.agentCommandTimeoutMs == null
+              ? DEFAULT_FOREGROUND_COMMAND_TIMEOUT_MS
+              : state.agentCommandTimeoutMs,
+          agentSearchCommandTimeoutMs:
+            state.agentSearchCommandTimeoutMs === LEGACY_DEFAULTS.agentSearchCommandTimeoutMs || state.agentSearchCommandTimeoutMs == null
+              ? DEFAULT_SEARCH_COMMAND_TIMEOUT_MS
+              : state.agentSearchCommandTimeoutMs,
+          agentLongRunningCommandTimeoutMs:
+            state.agentLongRunningCommandTimeoutMs === LEGACY_DEFAULTS.agentLongRunningCommandTimeoutMs || state.agentLongRunningCommandTimeoutMs == null
+              ? DEFAULT_LONG_RUNNING_COMMAND_TIMEOUT_MS
+              : state.agentLongRunningCommandTimeoutMs,
+          modelRequestTotalTimeoutMs:
+            state.modelRequestTotalTimeoutMs === LEGACY_DEFAULTS.modelRequestTotalTimeoutMs || state.modelRequestTotalTimeoutMs == null
+              ? DEFAULT_MODEL_TOTAL_TIMEOUT_MS
+              : state.modelRequestTotalTimeoutMs,
+          modelStreamIdleTimeoutMs:
+            state.modelStreamIdleTimeoutMs === LEGACY_DEFAULTS.modelStreamIdleTimeoutMs || state.modelStreamIdleTimeoutMs == null
+              ? DEFAULT_MODEL_IDLE_TIMEOUT_MS
+              : state.modelStreamIdleTimeoutMs,
+          requiredToolFirstTokenTimeoutMs:
+            state.requiredToolFirstTokenTimeoutMs === LEGACY_DEFAULTS.requiredToolFirstTokenTimeoutMs || state.requiredToolFirstTokenTimeoutMs == null
+              ? DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS
+              : state.requiredToolFirstTokenTimeoutMs,
+        };
+      },
       // Don't persist UI state like settingsOpen
       partialize: (state) => ({
         models: state.models,
@@ -420,6 +512,12 @@ export const useModelStore = create<ModelStoreState>()(
         agentMaxFileReadChars: state.agentMaxFileReadChars,
         agentHistoryMessages: state.agentHistoryMessages,
         agentBackgroundSettleMs: state.agentBackgroundSettleMs,
+        agentCommandTimeoutMs: state.agentCommandTimeoutMs,
+        agentSearchCommandTimeoutMs: state.agentSearchCommandTimeoutMs,
+        agentLongRunningCommandTimeoutMs: state.agentLongRunningCommandTimeoutMs,
+        modelRequestTotalTimeoutMs: state.modelRequestTotalTimeoutMs,
+        modelStreamIdleTimeoutMs: state.modelStreamIdleTimeoutMs,
+        requiredToolFirstTokenTimeoutMs: state.requiredToolFirstTokenTimeoutMs,
       }),
     }
   )

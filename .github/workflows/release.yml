@@ -39,15 +39,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add ${{ matrix.target }}
 
       - name: Install dependencies
         run: |
@@ -84,15 +79,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-pc-windows-msvc
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
 
       - name: Install dependencies
         shell: bash
@@ -146,15 +136,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-unknown-linux-gnu
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add x86_64-unknown-linux-gnu
 
       - name: Install dependencies
         run: |

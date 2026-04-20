@@ -237,7 +237,7 @@ export function AgentHeartbeatPopover({ onOpenModelSettings }: AgentHeartbeatPop
             className="mt-2 mb-1 w-full flex items-center justify-center gap-2 rounded-lg border border-border/80 bg-muted/30 px-3 py-2 text-[10px] font-medium text-foreground hover:bg-muted/50 transition-colors"
           >
             <Undo2 className="h-3.5 w-3.5 opacity-70" aria-hidden />
-            Reset limits &amp; heartbeat to defaults
+            Reset loop settings &amp; timeouts
           </button>
         </Section>
 

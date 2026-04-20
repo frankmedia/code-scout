@@ -32,6 +32,11 @@ export interface CommandResult {
   code: number | null;
 }
 
+export interface ExecuteCommandOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 // ─── Directory open ───────────────────────────────────────────────────────────
 
 /**
@@ -191,6 +196,7 @@ function shellArgs(shell: string, wrappedCmd: string): string[] {
 export async function executeCommand(
   cmd: string,
   cwd?: string,
+  options?: ExecuteCommandOptions,
 ): Promise<CommandResult> {
   if (!isTauri()) throw new Error('Shell execution requires Tauri desktop');
 
@@ -198,23 +204,105 @@ export async function executeCommand(
   const { Command } = await import('@tauri-apps/plugin-shell');
   const wrappedCmd = wrapWithPathSetup(cmd, shell, cwd);
   const args = shellArgs(shell, wrappedCmd);
-  const options = cwd ? { cwd } : undefined;
-  let output;
-  try {
-    output = await Command.create(shell, args, options).execute();
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message
-      : typeof err === 'string' ? err
-      : typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message)
-      : JSON.stringify(err);
-    throw new Error(`Shell execute failed: ${msg}`);
+  const commandOptions = cwd ? { cwd } : undefined;
+
+  if (!options?.timeoutMs && !options?.signal) {
+    let output;
+    try {
+      output = await Command.create(shell, args, commandOptions).execute();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message
+        : typeof err === 'string' ? err
+        : typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message)
+        : JSON.stringify(err);
+      throw new Error(`Shell execute failed: ${msg}`);
+    }
+
+    return {
+      stdout: output.stdout,
+      stderr: output.stderr,
+      code: output.code,
+    };
   }
 
-  return {
-    stdout: output.stdout,
-    stderr: output.stderr,
-    code: output.code,
-  };
+  const command = Command.create(shell, args, commandOptions);
+  let stdout = '';
+  let stderr = '';
+  let killOnSpawn = false;
+  let child: { kill: () => Promise<void> } | null = null;
+
+  return await new Promise<CommandResult>((resolve, reject) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (options?.signal && abortHandler) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+    };
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+
+    const fail = (error: Error) => {
+      if (!child) {
+        killOnSpawn = true;
+      } else {
+        child.kill().catch(() => {});
+      }
+      settle(() => reject(error));
+    };
+
+    const abortHandler = () => fail(new DOMException('Command execution cancelled', 'AbortError'));
+
+    command.stdout.on('data', data => {
+      stdout += data;
+    });
+    command.stderr.on('data', data => {
+      stderr += data;
+    });
+    command.on('close', data => {
+      settle(() => resolve({ stdout, stderr, code: data.code }));
+    });
+    command.on('error', err => {
+      const msg = err instanceof Error ? err.message
+        : typeof err === 'string' ? err
+        : JSON.stringify(err);
+      fail(new Error(`Shell spawn failed: ${msg}`));
+    });
+
+    if (typeof options?.timeoutMs === 'number' && options.timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        fail(new Error(`Command timed out after ${Math.round(options.timeoutMs / 1000)}s: ${cmd}`));
+      }, options.timeoutMs);
+    }
+
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        abortHandler();
+        return;
+      }
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    command.spawn().then(spawnedChild => {
+      child = spawnedChild;
+      if (killOnSpawn) {
+        child.kill().catch(() => {});
+      }
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message
+        : typeof err === 'string' ? err
+        : typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message)
+        : JSON.stringify(err);
+      settle(() => reject(new Error(`Shell spawn failed: ${msg}`)));
+    });
+  });
 }
 
 /**

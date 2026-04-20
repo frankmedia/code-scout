@@ -71,6 +71,8 @@ export function createRepairLedger(
     strategiesTried: new Set(),
     lastFingerprint: null,
     zeroProgressRounds: 0,
+    sameCategoryRounds: 0,
+    lastCategory: null,
   };
   _ledgerConfigs.set(ledger, cfg);
   return ledger;
@@ -84,6 +86,12 @@ export function recordAttempt(ledger: RepairLedger, attempt: RepairAttempt): voi
     ledger.zeroProgressRounds += 1;
   } else {
     ledger.zeroProgressRounds = 0;
+  }
+  if (ledger.lastCategory === attempt.fingerprint.category) {
+    ledger.sameCategoryRounds += 1;
+  } else {
+    ledger.sameCategoryRounds = 1;
+    ledger.lastCategory = attempt.fingerprint.category;
   }
 }
 
@@ -115,6 +123,8 @@ export function bumpBudget(ledger: RepairLedger, extraAttempts: number): void {
   // before re-escalating to the user. Without this, webSearchDone/pmReassessmentDone
   // staying true causes immediate re-escalation after just 2 more zero-progress rounds.
   ledger.zeroProgressRounds = 0;
+  ledger.sameCategoryRounds = 0;
+  ledger.lastCategory = null;
   ledger.webSearchDone = false;
   ledger.pmReassessmentDone = false;
 }
@@ -123,6 +133,10 @@ export function bumpBudget(ledger: RepairLedger, extraAttempts: number): void {
  * Compute progress score for the current iteration.
  * Each dimension that shows new evidence contributes 1 point.
  * Score 0 means the agent is learning nothing new.
+ *
+ * IMPORTANT: Fingerprint changes within the same error category (especially
+ * `build_error`) do NOT count as meaningful progress — the coder is likely
+ * chasing shifting symptoms rather than fixing the root cause.
  */
 export function computeProgress(
   ledger: RepairLedger,
@@ -135,10 +149,14 @@ export function computeProgress(
   const pmChanged = ledger.attempts.length > 0 &&
     ledger.attempts[ledger.attempts.length - 1].packageManager !== currentFingerprint.packageManager;
   const newStrategyFamily = !ledger.strategiesTried.has(currentFamily);
-  const repoStateChanged = fingerprintChanged;
+
+  const categoryChanged = ledger.lastCategory !== null && ledger.lastCategory !== currentFingerprint.category;
+  const repoStateChanged = categoryChanged;
+
+  const fingerprintScore = fingerprintChanged && categoryChanged ? 1 : 0;
 
   const score =
-    (fingerprintChanged ? 1 : 0) +
+    fingerprintScore +
     (pmChanged ? 1 : 0) +
     (newStrategyFamily ? 1 : 0) +
     newSearchSources +
@@ -155,6 +173,19 @@ function strategyCount(ledger: RepairLedger, strategyId: string): number {
 /** Count how many deterministic (non-LLM, non-search) attempts have been made. */
 function deterministicCount(ledger: RepairLedger): number {
   return ledger.attempts.filter(a => a.strategyFamily === 'local_deterministic').length;
+}
+
+function isLlmStrategyFamily(family: StrategyFamily): boolean {
+  return family === 'llm_targeted' || family === 'llm_with_search';
+}
+
+function isStructuralBuildError(failure: FailureFingerprint): boolean {
+  return failure.category === 'build_error' && (
+    failure.failingPackage === 'case_mismatch' ||
+    failure.failingPackage === 'server_component_undefined' ||
+    failure.failingPackage === 'tailwind_v4_postcss' ||
+    Boolean(failure.failingPackage?.startsWith('export_mismatch:'))
+  );
 }
 
 // ─── Human-readable ledger summary for LLM prompts ───────────────────────────
@@ -521,11 +552,25 @@ export function nextRepairAction(
         break;
       }
 
+      case 'build_error': {
+        // Check for specific build errors with deterministic fixes
+        if (failure.failingPackage === 'tailwind_v4_postcss' && strategyCount(ledger, 'tailwind-v4-postcss-fix') === 0) {
+          // Tailwind v4 requires @tailwindcss/postcss instead of using tailwindcss directly
+          const pm = context.packageManager ?? failure.packageManager;
+          return {
+            kind: 'run_command',
+            command: `${pm} install -D @tailwindcss/postcss`,
+            strategyId: 'tailwind-v4-postcss-fix',
+            strategyFamily: 'local_deterministic',
+          };
+        }
+        break;
+      }
+
       case 'timeout':
       case 'permission':
       case 'network':
       case 'npm_404':
-      case 'build_error':
       case 'edit_not_applied':
       case 'lockfile_conflict':
       case 'user_input_required':
@@ -537,21 +582,34 @@ export function nextRepairAction(
     }
   }
 
-  // ── Escalate to orchestrator after 2+ failed LLM attempts ─────────────────
+  // ── Escalate to orchestrator after repeated failures ───────────────────────
   // If the coder model has tried 2+ times and keeps failing, the problem is
   // likely structural (wrong imports, missing files, bad project layout) —
   // not something a line-level fix can solve. Escalate to the orchestrator
   // which can see the full project, collect ALL errors, and create a
-  // comprehensive fix plan. Also escalate immediately if the same error
-  // repeats (coder is going in circles).
-  const llmAttempts = ledger.attempts.filter(
-    a => a.strategyFamily === 'llm_targeted' || a.strategyFamily === 'llm_with_search',
-  ).length;
+  // comprehensive fix plan.
+  //
+  // Key escalation triggers:
+  //   - 2+ LLM repair attempts failed
+  //   - Same exact error repeated twice (identical snippet)
+  //   - Same error *category* repeated 3+ times (e.g. build_error keeps changing
+  //     from ContactForm to Section to server_component — coder is chasing symptoms)
+  //   - Structural build error (case mismatch, export mismatch, server component)
+  //     after even 1 LLM attempt — these need project-wide fixes, not line edits
+  const llmAttempts = ledger.attempts.filter(a => isLlmStrategyFamily(a.strategyFamily)).length;
   const lastTwo = ledger.attempts.slice(-2);
   const sameErrorRepeating = lastTwo.length === 2 &&
     lastTwo[0].errorSnippet && lastTwo[1].errorSnippet &&
     lastTwo[0].errorSnippet === lastTwo[1].errorSnippet;
-  if (llmAttempts >= 2 || sameErrorRepeating) {
+  const sameCategoryStuck = ledger.sameCategoryRounds >= 3;
+  const buildErrorCategoryStuck = failure.category === 'build_error' && ledger.sameCategoryRounds >= 2;
+  if (
+    llmAttempts >= 2 ||
+    sameErrorRepeating ||
+    sameCategoryStuck ||
+    buildErrorCategoryStuck ||
+    (isStructuralBuildError(failure) && llmAttempts >= 1)
+  ) {
     return {
       kind: 'escalate_to_orchestrator',
       context: formatLedgerForPrompt(ledger),

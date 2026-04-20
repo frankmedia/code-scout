@@ -254,7 +254,7 @@ CRITICAL — Tailwind CSS: If writing a CSS file that uses Tailwind, include the
         // Fallback estimate if provider didn't report usage
         if (!gotProviderTokens) {
           const est = Math.ceil(userContent.length / 4) + Math.ceil((final || fullText).length / 4);
-          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est, 'coder');
         }
         resolve(cleanCodeResponse(final));
       },
@@ -262,7 +262,7 @@ CRITICAL — Tailwind CSS: If writing a CSS file that uses Tailwind, include the
       (usage) => {
         gotProviderTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total, 'coder');
       },
     );
   });

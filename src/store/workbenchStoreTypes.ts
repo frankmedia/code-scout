@@ -57,12 +57,51 @@ export interface ChatMessage {
 export let lastDevServerUrl: string | null = null;
 export function setLastDevServerUrl(url: string | null): void { lastDevServerUrl = url; }
 
+export type PlanAction =
+  | 'create_file'
+  | 'edit_file'
+  | 'delete_file'
+  | 'run_command'
+  | 'web_search'
+  | 'captcha_detect'
+  | 'captcha_click'
+  | 'captcha_solve'
+  | 'captcha_get_image'
+  | 'get_links'
+  | 'crawl'
+  | 'sitemap'
+  | 'detect_form'
+  | 'save_json'
+  | 'save_csv'
+  | 'save_markdown'
+  | 'save_screenshot'
+  | 'fetch_url'
+  | 'browse_web'
+  // Browser automation actions
+  | 'browser_launch'
+  | 'browser_goto'
+  | 'browser_click'
+  | 'browser_fill'
+  | 'browser_extract'
+  | 'browser_screenshot'
+  | 'browser_scroll'
+  | 'browser_wait'
+  | 'browser_close';
+
 export interface PlanStep {
   id: string;
-  action: 'create_file' | 'edit_file' | 'delete_file' | 'run_command' | 'web_search' | 'fetch_url';
+  action: PlanAction;
   path?: string;
   command?: string;
+  /** Full file content for deterministic create_file steps. */
+  content?: string;
   description: string;
+  /** Browser actions: CSS selector or text to find element */
+  selector?: string;
+  /** Browser actions: value to fill in input */
+  value?: string;
+  /** Browser actions: URL to navigate to */
+  url?: string;
   status: 'pending' | 'running' | 'repairing' | 'done' | 'error';
   /** Set when status is error — execution or verification failure reason */
   errorMessage?: string;

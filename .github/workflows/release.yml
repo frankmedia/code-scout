@@ -89,7 +89,7 @@ jobs:
         run: npm run build
 
       - name: Build Tauri
-        run: npm run tauri build -- --target x86_64-pc-windows-msvc --config src-tauri/tauri.nosidecar.conf.json
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc --config src-tauri/tauri.nosidecar.conf.json --config src-tauri/tauri.release.conf.json
 
       - name: Find and upload artifacts
         shell: bash
@@ -143,7 +143,7 @@ jobs:
         run: npm run build
 
       - name: Build Tauri
-        run: npm run tauri build -- --target x86_64-unknown-linux-gnu --config src-tauri/tauri.nosidecar.conf.json
+        run: npm run tauri build -- --target x86_64-unknown-linux-gnu --config src-tauri/tauri.nosidecar.conf.json --config src-tauri/tauri.release.conf.json
 
       - name: Find and upload artifacts
         env:

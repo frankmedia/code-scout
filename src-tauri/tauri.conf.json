@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Code Scout",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "identifier": "com.codescout.app",
   "build": {
     "frontendDist": "../dist",
@@ -28,7 +28,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

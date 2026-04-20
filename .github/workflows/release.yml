@@ -49,9 +49,14 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install
+          
+      - name: Test frontend build
+        run: npm run build
 
-      - name: Build
+      - name: Build Tauri
         run: npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Zip and upload app bundle
@@ -88,9 +93,14 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -rf node_modules
+          npm install
+          
+      - name: Test frontend build
+        run: npm run build
 
-      - name: Build
+      - name: Build Tauri
         run: npm run tauri build -- --target x86_64-pc-windows-msvc --config src-tauri/tauri.nosidecar.conf.json
 
       - name: Find and upload artifacts
@@ -143,9 +153,14 @@ jobs:
           workspaces: src-tauri
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -rf node_modules
+          npm install
+          
+      - name: Test frontend build
+        run: npm run build
 
-      - name: Build
+      - name: Build Tauri
         run: npm run tauri build -- --target x86_64-unknown-linux-gnu --config src-tauri/tauri.nosidecar.conf.json
 
       - name: Find and upload artifacts

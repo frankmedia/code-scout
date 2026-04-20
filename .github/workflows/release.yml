@@ -45,9 +45,7 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Install dependencies
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install
+        run: npm ci
           
       - name: Test frontend build
         run: npm run build
@@ -85,10 +83,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          rm -rf node_modules || true
-          npm install
+        run: npm ci
           
       - name: Test frontend build
         run: npm run build
@@ -142,9 +137,7 @@ jobs:
           rustup target add x86_64-unknown-linux-gnu
 
       - name: Install dependencies
-        run: |
-          rm -rf node_modules
-          npm install
+        run: npm ci
           
       - name: Test frontend build
         run: npm run build

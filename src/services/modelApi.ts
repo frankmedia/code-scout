@@ -1,5 +1,9 @@
 import { ModelConfig, ModelProvider, useModelStore } from '@/store/modelStore';
 import type { AssistantToolCall } from '@/services/chatTools';
+import {
+  DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+  DEFAULT_MODEL_TOTAL_TIMEOUT_MS,
+} from '@/config/runtimeTimeoutDefaults';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -66,6 +70,79 @@ export interface TokenUsage {
   outputTokens: number;
 }
 
+function combineAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const active = signals.filter((s): s is AbortSignal => !!s);
+  if (active.length === 0) return undefined;
+  if (active.length === 1) return active[0];
+  const anyFn = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') {
+    try {
+      return anyFn(active);
+    } catch {
+      // Fall through to manual wiring.
+    }
+  }
+  const ctrl = new AbortController();
+  const abortFrom = (src: AbortSignal) => {
+    if (!ctrl.signal.aborted) ctrl.abort(src.reason);
+  };
+  for (const sig of active) {
+    if (sig.aborted) {
+      abortFrom(sig);
+      break;
+    }
+    sig.addEventListener('abort', () => abortFrom(sig), { once: true });
+  }
+  return ctrl.signal;
+}
+
+function getAbortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+  if (reason instanceof Error) return reason;
+  return new DOMException('Request aborted', 'AbortError');
+}
+
+function createModelStreamGuard(external?: AbortSignal): {
+  signal: AbortSignal | undefined;
+  armIdleTimer: () => void;
+  clearIdleTimer: () => void;
+} {
+  const {
+    modelRequestTotalTimeoutMs = DEFAULT_MODEL_TOTAL_TIMEOUT_MS,
+    modelStreamIdleTimeoutMs = DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+  } = useModelStore.getState();
+  const totalTimeout = AbortSignal.timeout(modelRequestTotalTimeoutMs);
+  const idleCtrl = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (!idleCtrl.signal.aborted) {
+        idleCtrl.abort(
+          new DOMException(
+            `Model stream idle for ${Math.round(modelStreamIdleTimeoutMs / 1000)}s`,
+            'TimeoutError',
+          ),
+        );
+      }
+    }, modelStreamIdleTimeoutMs);
+  };
+
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+  };
+
+  return {
+    signal: combineAbortSignals([external, totalTimeout, idleCtrl.signal]),
+    armIdleTimer,
+    clearIdleTimer,
+  };
+}
+
 /** Append a chunk; invoke `emit` for each complete \\n-terminated line. Returns trailing partial line. */
 function pushStreamLines(buffer: string, chunk: string, emit: (line: string) => void): string {
   const combined = buffer + chunk;
@@ -116,7 +193,7 @@ function emitOpenAIUsage(parsed: { usage?: Record<string, unknown> }, onTokens?:
   if (!onTokens || !parsed.usage) return;
   const u = parsed.usage;
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  let inputTokens = num(u.prompt_tokens) || num(u.input_tokens) || 0;
+  const inputTokens = num(u.prompt_tokens) || num(u.input_tokens) || 0;
   let outputTokens = num(u.completion_tokens) || num(u.output_tokens) || 0;
   const total = num(u.total_tokens);
   if (!inputTokens && !outputTokens && total) {
@@ -369,10 +446,13 @@ async function callOllama(
     return;
   }
   const endpoint = req.endpoint.replace(/\/+$/, '');
+  const guard = createModelStreamGuard(req.signal);
 
   try {
-    const resolved = await resolveOllamaModelId(endpoint, req.modelId, req.signal);
+    guard.armIdleTimer();
+    const resolved = await resolveOllamaModelId(endpoint, req.modelId, guard.signal);
     if (!resolved.ok) {
+      guard.clearIdleTimer();
       onError(new Error(resolved.message));
       return;
     }
@@ -395,7 +475,7 @@ async function callOllama(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: req.signal,
+      signal: guard.signal,
     });
 
     if (!res.ok) {
@@ -476,16 +556,18 @@ async function callOllama(
     };
 
     while (true) {
-      if (req.signal?.aborted) {
+      if (guard.signal?.aborted) {
         await reader.cancel().catch(() => {});
-        onError(new DOMException('Request aborted', 'AbortError'));
+        onError(getAbortError(guard.signal));
         return;
       }
       const { done, value } = await reader.read();
       if (done) break;
+      guard.armIdleTimer();
       lineBuf = pushStreamLines(lineBuf, decoder.decode(value, { stream: true }), handleLine);
     }
     if (lineBuf.trim()) handleLine(lineBuf.trim());
+    guard.clearIdleTimer();
 
     onDone(
       fullText,
@@ -494,7 +576,9 @@ async function callOllama(
         : { providerModelUsed: chatModelId },
     );
   } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
+    onError(guard.signal?.aborted ? getAbortError(guard.signal) : err instanceof Error ? err : new Error(String(err)));
+  } finally {
+    guard.clearIdleTimer();
   }
 }
 
@@ -515,8 +599,10 @@ async function callOpenAICompatible(
   }
 
   const endpoint = (req.endpoint || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const guard = createModelStreamGuard(req.signal);
 
   try {
+    guard.armIdleTimer();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (req.apiKey) headers['Authorization'] = `Bearer ${req.apiKey}`;
     if (req.provider === 'openrouter') {
@@ -544,7 +630,7 @@ async function callOpenAICompatible(
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-      signal: req.signal,
+      signal: guard.signal,
     });
 
     if (!res.ok) {
@@ -605,21 +691,25 @@ async function callOpenAICompatible(
     };
 
     while (true) {
-      if (req.signal?.aborted) {
+      if (guard.signal?.aborted) {
         await reader.cancel().catch(() => {});
-        onError(new DOMException('Request aborted', 'AbortError'));
+        onError(getAbortError(guard.signal));
         return;
       }
       const { done, value } = await reader.read();
       if (done) break;
+      guard.armIdleTimer();
       lineBuf = pushStreamLines(lineBuf, decoder.decode(value, { stream: true }), handleLine);
     }
     if (lineBuf.trim()) handleLine(lineBuf.trim());
+    guard.clearIdleTimer();
 
     const toolCalls = finalizeStreamedToolCalls(toolAcc);
     onDone(fullText, toolCalls?.length ? { toolCalls } : undefined);
   } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
+    onError(guard.signal?.aborted ? getAbortError(guard.signal) : err instanceof Error ? err : new Error(String(err)));
+  } finally {
+    guard.clearIdleTimer();
   }
 }
 
@@ -631,8 +721,10 @@ async function callAnthropic(
   onTokens?: TokensCallback,
 ): Promise<void> {
   const endpoint = (req.endpoint || 'https://api.anthropic.com').replace(/\/+$/, '');
+  const guard = createModelStreamGuard(req.signal);
 
   try {
+    guard.armIdleTimer();
     if (!req.apiKey) throw new Error('Anthropic API key required');
 
     const systemMsg = req.messages.find(m => m.role === 'system');
@@ -683,7 +775,7 @@ async function callAnthropic(
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify(body),
-      signal: req.signal,
+      signal: guard.signal,
     });
 
     if (!res.ok) {
@@ -727,23 +819,27 @@ async function callAnthropic(
     };
 
     while (true) {
-      if (req.signal?.aborted) {
+      if (guard.signal?.aborted) {
         await reader.cancel().catch(() => {});
-        onError(new DOMException('Request aborted', 'AbortError'));
+        onError(getAbortError(guard.signal));
         return;
       }
       const { done, value } = await reader.read();
       if (done) break;
+      guard.armIdleTimer();
       lineBuf = pushStreamLines(lineBuf, decoder.decode(value, { stream: true }), handleLine);
     }
     if (lineBuf.trim()) handleLine(lineBuf.trim());
+    guard.clearIdleTimer();
 
     if (onTokens && (inputTokens || outputTokens)) {
       onTokens({ inputTokens, outputTokens });
     }
     onDone(fullText);
   } catch (err) {
-    onError(err instanceof Error ? err : new Error(String(err)));
+    onError(guard.signal?.aborted ? getAbortError(guard.signal) : err instanceof Error ? err : new Error(String(err)));
+  } finally {
+    guard.clearIdleTimer();
   }
 }
 

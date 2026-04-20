@@ -13,6 +13,7 @@ import { DEFAULT_LLAMA_CPP_URL, DEFAULT_OLLAMA_URL } from '@/config/llmNetworkDe
 import { resolveContextWindowTokens } from '@/config/modelContextDefaults';
 import { effectiveSupportsVision, guessSupportsVisionFromModelId } from '@/config/modelVisionHeuristics';
 import ModelDiscovery from './ModelDiscovery';
+import ScaffoldSettings from './ScaffoldSettings';
 
 const roleIcons: Record<AgentRole, typeof Brain> = {
   orchestrator: Brain,
@@ -466,6 +467,18 @@ const AdvancedSettings = () => {
   const setOrchTimeout = useModelStore(s => s.setOrchestratorTimeout);
   const httpTimeout = useModelStore(s => s.httpTimeoutMs);
   const setHttpTimeout = useModelStore(s => s.setHttpTimeout);
+  const cmdTimeout = useModelStore(s => s.agentCommandTimeoutMs);
+  const setCmdTimeout = useModelStore(s => s.setAgentCommandTimeoutMs);
+  const searchTimeout = useModelStore(s => s.agentSearchCommandTimeoutMs);
+  const setSearchTimeout = useModelStore(s => s.setAgentSearchCommandTimeoutMs);
+  const longCmdTimeout = useModelStore(s => s.agentLongRunningCommandTimeoutMs);
+  const setLongCmdTimeout = useModelStore(s => s.setAgentLongRunningCommandTimeoutMs);
+  const modelTotalTimeout = useModelStore(s => s.modelRequestTotalTimeoutMs);
+  const setModelTotalTimeout = useModelStore(s => s.setModelRequestTotalTimeoutMs);
+  const modelIdleTimeout = useModelStore(s => s.modelStreamIdleTimeoutMs);
+  const setModelIdleTimeout = useModelStore(s => s.setModelStreamIdleTimeoutMs);
+  const requiredToolTimeout = useModelStore(s => s.requiredToolFirstTokenTimeoutMs);
+  const setRequiredToolTimeout = useModelStore(s => s.setRequiredToolFirstTokenTimeoutMs);
   const stepOut = useModelStore(s => s.stepOutputMaxChars);
   const setStepOut = useModelStore(s => s.setStepOutputMaxChars);
   const memMax = useModelStore(s => s.memoryMaxChars);
@@ -478,10 +491,22 @@ const AdvancedSettings = () => {
       <div>
         <h3 className="text-xs font-semibold text-foreground mb-3">Timeouts</h3>
         <div className="space-y-3">
+          <AdvancedRow label="Normal shell command" hint="Default timeout for foreground commands."
+            value={Math.round(cmdTimeout / 1000)} onChange={v => setCmdTimeout(v * 1000)} unit="sec" min={10} max={900} />
+          <AdvancedRow label="Search command" hint="Faster cutoff for grep / rg / git grep style scans."
+            value={Math.round(searchTimeout / 1000)} onChange={v => setSearchTimeout(v * 1000)} unit="sec" min={5} max={300} />
+          <AdvancedRow label="Build / repair command" hint="Used for builds, installs, lint/test, and repair shell steps."
+            value={Math.round(longCmdTimeout / 1000)} onChange={v => setLongCmdTimeout(v * 1000)} unit="sec" min={30} max={1800} />
+          <AdvancedRow label="Model request total" hint="Hard cap for a single model API request."
+            value={Math.round(modelTotalTimeout / 1000)} onChange={v => setModelTotalTimeout(v * 1000)} unit="sec" min={30} max={1800} />
+          <AdvancedRow label="Model stream idle" hint="Abort a model stream if it goes silent for this long."
+            value={Math.round(modelIdleTimeout / 1000)} onChange={v => setModelIdleTimeout(v * 1000)} unit="sec" min={10} max={900} />
+          <AdvancedRow label="Required-tool first token" hint="How long to wait for first output when tool_choice=required is forced."
+            value={Math.round(requiredToolTimeout / 1000)} onChange={v => setRequiredToolTimeout(v * 1000)} unit="sec" min={10} max={1800} />
           <AdvancedRow label="Orchestrator evaluation" hint="Max wait for orchestrator to evaluate plan results."
-            value={Math.round(orchTimeout / 1000)} onChange={v => setOrchTimeout(v * 1000)} unit="sec" min={5} max={300} />
+            value={Math.round(orchTimeout / 1000)} onChange={v => setOrchTimeout(v * 1000)} unit="sec" min={5} max={1800} />
           <AdvancedRow label="Web search / fetch" hint="Max time per HTTP request during plan steps."
-            value={Math.round(httpTimeout / 1000)} onChange={v => setHttpTimeout(v * 1000)} unit="sec" min={5} max={300} />
+            value={Math.round(httpTimeout / 1000)} onChange={v => setHttpTimeout(v * 1000)} unit="sec" min={5} max={1800} />
         </div>
       </div>
       <div>
@@ -504,7 +529,7 @@ const AdvancedSettings = () => {
 
 // ─── Main Settings Modal ─────────────────────────────────────────────────────
 
-type SettingsTab = 'discover' | 'models' | 'advanced';
+type SettingsTab = 'discover' | 'models' | 'scaffolds' | 'advanced';
 
 const ModelSettings = () => {
   const { models, settingsOpen, setSettingsOpen, addModel, updateModel } = useModelStore();
@@ -586,6 +611,7 @@ const ModelSettings = () => {
           {([
             { id: 'discover', label: 'Discover' },
             { id: 'models', label: 'Models & Roles' },
+            { id: 'scaffolds', label: 'Scaffolds' },
             { id: 'advanced', label: 'Advanced' },
           ] as { id: SettingsTab; label: string }[]).map(t => (
             <button
@@ -674,6 +700,11 @@ const ModelSettings = () => {
                 </>
               )}
             </>
+          )}
+
+          {/* ─── Scaffolds Tab ─── */}
+          {tab === 'scaffolds' && (
+            <ScaffoldSettings />
           )}
 
           {/* ─── Advanced Tab ─── */}

@@ -21,6 +21,7 @@ import {
   freePortIfOccupied,
   BACKGROUND_SETTLE_MS_EXPORT,
 } from '@/services/agentExecutor';
+import { getForegroundCommandTimeoutMs } from '@/services/agentCommandTimeouts';
 import type { FileNode } from '@/store/workbenchStore';
 
 function flattenFilePaths(nodes: FileNode[]): { path: string }[] {
@@ -177,7 +178,7 @@ export function ChatToolInvocations({ messageId, invocations, onChainMaybeContin
             }
 
             // Normal foreground command
-            const CMD_TIMEOUT_MS = 120_000;
+            const cmdTimeoutMs = getForegroundCommandTimeoutMs(rawCmd);
             let stdoutBuf = '';
             let stderrBuf = '';
             let killFn: (() => void) | null = null;
@@ -192,14 +193,14 @@ export function ChatToolInvocations({ messageId, invocations, onChainMaybeContin
                   patchInvocation(t.id, {
                     status: 'completed',
                     stdout: stdoutBuf,
-                    stderr: stderrBuf + '\n(timed out after 120s)',
+                    stderr: stderrBuf + `\n(timed out after ${Math.round(cmdTimeoutMs / 1000)}s)`,
                     exitCode: null,
                   });
-                  addTerminalOutput('! Command timed out after 120s');
+                  addTerminalOutput(`! Command timed out after ${Math.round(cmdTimeoutMs / 1000)}s`);
                   addLog('Command timed out', 'warning');
                   settle();
                 }
-              }, CMD_TIMEOUT_MS);
+              }, cmdTimeoutMs);
 
               spawnCommand(
                 rawCmd,

@@ -1,5 +1,6 @@
 import type { AssistantToolCall } from '@/services/chatTools';
 import type { ModelProvider } from '@/store/modelStore';
+import { DEFAULT_MODEL_TOTAL_TIMEOUT_MS } from '@/config/runtimeTimeoutDefaults';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ export type ChatToolDefinition = {
 };
 
 /** Wall-clock cap for an entire model stream (planning, chat, repair). Prevents infinite hangs when the server never closes SSE. */
-export const DEFAULT_MODEL_STREAM_TIMEOUT_MS = 15 * 60 * 1000;
+export const DEFAULT_MODEL_STREAM_TIMEOUT_MS = DEFAULT_MODEL_TOTAL_TIMEOUT_MS;
 
 export interface ModelRequest {
   messages: ModelRequestMessage[];

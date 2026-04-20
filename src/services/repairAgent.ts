@@ -49,7 +49,7 @@ export function requestOrchestratorReplanning(input: ReplanInput): Promise<Orche
   const system = `You are the orchestrator agent. A step in the plan has failed after ${attemptCount} repair attempts.
 Your job is to generate a COMPLETELY NEW STRATEGY — not a tweak, but a fresh approach that avoids whatever was broken.
 ${projectContext ? `PROJECT: ${projectContext.framework} / ${projectContext.language} / ${projectContext.packageManager}` : ''}${platformBlock}${envRunbookBlock}${memoryBlock}
-Output ONLY a JSON array of 1–3 steps. No markdown fences, no explanation.
+Output ONLY a JSON array of 1–5 steps. No markdown fences, no explanation.
 Each step must be one of:
   {"action":"run_command","description":"...","command":"single shell command"}
   {"action":"create_file","description":"...","path":"relative/path","content":"full file content"}
@@ -57,9 +57,18 @@ Each step must be one of:
 
 Rules:
 - NEVER repeat any approach from the attempt history below.
-- Return the minimal number of steps that could plausibly resolve the error.
+- Return the minimal number of steps that could plausibly resolve ALL errors shown.
 - For install failures: try a different package manager, different flags, or skip the package entirely and use an alternative.
-- For build failures: consider a different file structure, different imports, or a simpler implementation.
+- For "Module not found" or "Can't resolve" errors:
+  1. Check if the file is listed in PROJECT_FILES. If NOT listed, it does not exist — you MUST create it with create_file and provide full working content.
+  2. If the file exists but the import path is wrong (case mismatch, wrong directory), fix the import in the importing file.
+  3. If the file exists but the export is wrong (named vs default), fix the export declaration.
+- For "The PostCSS plugin has moved to a separate package" or "you're trying to use tailwindcss directly as a PostCSS plugin" (Tailwind v4 error):
+  1. run_command: npm install -D @tailwindcss/postcss
+  2. edit_file postcss.config.mjs: change \`tailwindcss: {}\` to \`"@tailwindcss/postcss": {}\` and remove autoprefixer
+  3. edit_file globals.css (or main CSS): change \`@tailwind base; @tailwind components; @tailwind utilities;\` to \`@import "tailwindcss";\`
+- For "export ... was not found" or "is not exported from" errors: fix the export in the source file to match what the importer expects.
+- For build failures with multiple errors: address ALL distinct errors, not just the first one. Create missing files, fix bad exports, and resolve import mismatches in one comprehensive plan.
 - For missing binding / native module errors: the canonical fix is rm -rf the x64 dir + reinstall without lockfile.
 - Paths must exist in PROJECT_FILES or be newly created by your steps.
 - Return an empty array [] ONLY if you are completely certain no alternative approach exists.`;
@@ -94,7 +103,7 @@ Generate 1–3 replacement steps with a completely different strategy.`;
       (text) => {
         if (!gotTokens) {
           const est = Math.ceil(user.length / 4) + Math.ceil((text || full).length / 4);
-          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est, 'orchestrator');
         }
         try {
           const fence = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
@@ -105,7 +114,7 @@ Generate 1–3 replacement steps with a completely different strategy.`;
           if (!Array.isArray(arr)) { resolve([]); return; }
           const valid = arr.filter(s =>
             s && typeof s.action === 'string' && typeof s.description === 'string',
-          ).slice(0, 3);
+          ).slice(0, 5);
           resolve(valid);
         } catch {
           resolve([]);
@@ -115,7 +124,7 @@ Generate 1–3 replacement steps with a completely different strategy.`;
       (usage) => {
         gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total, 'orchestrator');
       },
     );
   });
@@ -212,6 +221,11 @@ Rules:
 - Use ONLY paths that appear under PROJECT_FILES below. Do not invent vite.config.js if vite.config.ts is listed. Vite + React apps usually use src/main.tsx or src/main.jsx — not main.js at repo root.
 - Prefer run_command "${ctx?.runCommands?.build || 'npm run build'}" over bare "vite build" when package.json has a build script.
 - If the error is "Identifier X has already been declared" (e.g. App): the file often both imports X from another module and defines X again — remove the duplicate definition or the redundant import so only one binding exists.
+- Next.js / Webpack / Vite "Can't resolve" or "failed to resolve import" for \`@/\`, \`./\`, \`../\`, \`~\`, or \`#\`: this is a wrong path or missing SOURCE file — align import paths with filenames (e.g. \`ContactForm.tsx\` vs \`contact-form\`) and tsconfig "paths". NEVER \`npm install\` a path that starts with \`@/\`. If the file doesn't exist, use create_file to create it.
+- **Tailwind v4 PostCSS error** ("The PostCSS plugin has moved to a separate package", "you're trying to use tailwindcss directly as a PostCSS plugin"): Tailwind v4 requires \`@tailwindcss/postcss\` instead of using \`tailwindcss\` directly. Fix: (1) run \`npm install -D @tailwindcss/postcss\`, (2) edit postcss.config.mjs to use \`"@tailwindcss/postcss": {}\` instead of \`tailwindcss: {}\` and remove autoprefixer, (3) edit the main CSS file to use \`@import "tailwindcss";\` instead of \`@tailwind base; @tailwind components; @tailwind utilities;\`.
+- Next.js / Webpack casing errors ("multiple modules with names that only differ in casing", "Use equal casing"): normalize the entire import graph to one canonical filename/import casing. The import path must EXACTLY match the actual filename. Fix ALL files with mismatched casing in one repair, not just the first one. Either rename files to match imports OR change imports to match filenames — be consistent.
+- React component export consistency: For components in \`components/\` folders, use named exports (\`export function Header() {}\`) and named imports (\`import { Header } from '@/components/Header'\`). For Next.js pages/layouts in \`app/\`, use \`export default function\`. If you see "export 'default' was not found" or "is not exported from", check if the component uses named vs default export and fix BOTH the export declaration AND all import statements to match.
+- "Unsupported Server Component type: undefined" after import/export warnings usually means a structural import/export mismatch remains. This often happens when a barrel file re-exports incorrectly. Prefer fixing all related imports/exports together rather than one symbol at a time.
 - You MAY use run_command to discover system information needed to fix the error: e.g. "find ~/.cargo/registry -path '*plugin-name*' -name '*.toml' | head -10", "cat /path/to/schema.json | python3 -m json.tool | head -50", "rustc --version", "find node_modules/.../permissions -name '*.toml'". Use these when the error involves missing permissions, unknown API schemas, or system-level configuration outside the project tree.
 - If you cannot fix it, respond with: {"kind":"edit_file","path":"","before":"","after":""} (empty path) to signal no safe fix.`;
 }
@@ -301,7 +315,10 @@ export function requestRepairFix(input: RepairAgentInput): Promise<RepairFix | n
       }
     };
     walk(ws.files);
-    const componentFiles = allFiles.filter(f => /component/i.test(f) || /^(src\/)?components\//.test(f));
+    const componentFiles = allFiles.filter(f => {
+      const p = f.replace(/\\/g, '/');
+      return /component/i.test(p) || /(^|\/)components\//.test(p) || /(^|\/)app\//.test(p);
+    });
     if (componentFiles.length > 0) {
       componentTree = `\nCOMPONENT FILES (these are the ACTUAL files that exist):\n${componentFiles.join('\n')}\n`;
     }
@@ -327,6 +344,7 @@ ${fileExcerpt
 IMPORTANT: If there are multiple "Module not found" errors, fix ALL of them in one step.
 If the error is about import paths, check TSCONFIG PATHS above to understand how @/ resolves.
 If a component file exists but the import path is wrong, fix the import — don't create duplicates.
+If the build says "Can't resolve '@/…'" or "failed to resolve import" for a path starting with @/, ./, or ../: fix the import to match a real file under COMPONENT FILES — do not npm install that string.
 
 Return ONLY the JSON object for one fix.`;
 
@@ -343,7 +361,7 @@ Return ONLY the JSON object for one fix.`;
       (text) => {
         if (!gotTokens) {
           const est = Math.ceil(user.length / 4) + Math.ceil((text || full).length / 4);
-          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est);
+          if (est > 0) useWorkbenchStore.getState().addAiSessionTokens(est, 'coder');
         }
         const jsonStr = extractJSON(text);
         if (!jsonStr) {
@@ -386,7 +404,7 @@ Return ONLY the JSON object for one fix.`;
       (usage) => {
         gotTokens = true;
         const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total);
+        if (total > 0) useWorkbenchStore.getState().addAiSessionTokens(total, 'coder');
       },
     );
   });

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff, Undo2, Heart } from 'lucide-react';
+import { Send, Square, Loader2, Brain, Terminal, AlertCircle, ChevronDown, ImagePlus, Paperclip, FileCode, X, CheckCircle2, Circle, Cloud, Network, Search, Mic, MicOff, Undo2, Heart, Globe } from 'lucide-react';
 import { AgentHeartbeatPopover } from './AgentHeartbeatPopover';
 import { useWorkbenchStore, AppMode, type ChatImagePart } from '@/store/workbenchStore';
 import { useModelStore, PROVIDER_OPTIONS, ModelProvider } from '@/store/modelStore';
@@ -63,6 +63,7 @@ function providerSupportsNativeTools(provider: ModelProvider): boolean {
 const modeOptions: { key: AppMode; label: string }[] = [
   { key: 'chat', label: 'Chat' },
   { key: 'agent', label: 'Agent' },
+  { key: 'web', label: 'Web' },
 ];
 
 const MAX_ATTACHMENTS = 4;
@@ -827,13 +828,13 @@ const AIPanel = () => {
     if (el) el.scrollTop = el.scrollHeight;
   }, [activeCenterTab]);
 
-  const applyTokenUsage = useCallback((usage: TokenUsage) => {
+  const applyTokenUsage = useCallback((usage: TokenUsage, role: 'orchestrator' | 'coder' = 'orchestrator') => {
     const inn = usage.inputTokens ?? 0;
     const out = usage.outputTokens ?? 0;
     if (inn <= 0 && out <= 0) return;
     // Always count toward session total — even if isThinking is already false
     const total = inn + out;
-    if (total > 0) queueMicrotask(() => addAiSessionTokens(total));
+    if (total > 0) queueMicrotask(() => addAiSessionTokens(total, role));
     // Update live display only while thinking
     if (!isThinkingRef.current) return;
     setLiveTurnTokens(prev => {
@@ -1409,7 +1410,7 @@ const AIPanel = () => {
             (finalText) => {
               if (!gotTokens) {
                 const est = Math.ceil(userMsg.length / 4) + Math.ceil((finalText || full).length / 4);
-                if (est > 0) addAiSessionTokens(est);
+                if (est > 0) addAiSessionTokens(est, 'orchestrator');
               }
               resolve(finalText || full);
             },
@@ -1417,7 +1418,7 @@ const AIPanel = () => {
             (usage) => {
               gotTokens = true;
               const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-              if (total > 0) addAiSessionTokens(total);
+              if (total > 0) addAiSessionTokens(total, 'orchestrator');
             },
           );
         });
@@ -1531,6 +1532,8 @@ const AIPanel = () => {
       maxCoderRounds: loopLimits.agentMaxCoderRounds,
       maxFileReadChars: loopLimits.agentMaxFileReadChars,
       backgroundSettleMs: loopLimits.agentBackgroundSettleMs,
+      heartbeatIntervalMs: loopLimits.agentHeartbeatIntervalMs,
+      stallWarningAfterMs: loopLimits.agentStallWarningAfterMs,
       callbacks: {
         onChunk: (chunk) => {
           trackStreamChunk(chunk);
@@ -1684,7 +1687,7 @@ const AIPanel = () => {
           (finalText: string) => {
             if (!gotTokens) {
               const est = Math.ceil(stepResults.length / 4) + Math.ceil((finalText || full).length / 4);
-              if (est > 0) addAiSessionTokens(est);
+              if (est > 0) addAiSessionTokens(est, 'orchestrator');
             }
             resolve(finalText || full);
           },
@@ -1692,7 +1695,7 @@ const AIPanel = () => {
           (usage) => {
             gotTokens = true;
             const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-            if (total > 0) addAiSessionTokens(total);
+            if (total > 0) addAiSessionTokens(total, 'orchestrator');
           },
         );
       });
@@ -2409,7 +2412,7 @@ const AIPanel = () => {
               e.preventDefault();
               if (canSendIdle) void handleSend();
             }}
-            placeholder={(mode === 'agent' || mode === 'build' || mode === 'plan') ? 'Tell me what to do...' : 'Ask a question...'}
+            placeholder={mode === 'web' ? 'Describe what to do in the browser...' : (mode === 'agent' || mode === 'build' || mode === 'plan') ? 'Tell me what to do...' : 'Ask a question...'}
             className="w-full min-h-[6rem] max-h-44 bg-input text-foreground text-[12px] rounded-lg pl-3 pr-10 pt-3 pb-9 resize-none focus:outline-none focus:ring-2 focus:ring-primary/80 focus:ring-offset-2 focus:ring-offset-background placeholder:text-muted-foreground font-sans border border-border/60 overflow-y-auto"
             rows={4}
           />

@@ -1,6 +1,7 @@
 import { FileNode } from '@/store/workbenchStore';
 import { executeCommand, isTauri } from '@/lib/tauri';
 import type { FailureFingerprint, PackageManager } from './repairTypes';
+import { getLongRunningCommandTimeoutMs } from './agentCommandTimeouts';
 
 const PROJECT_MARKERS = ['package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'setup.py', 'Makefile', 'pom.xml', 'build.gradle'];
 
@@ -97,6 +98,18 @@ function pickNpmScript(scripts: PackageScripts): string | null {
   return null;
 }
 
+function stripValidationOutputTruncation(command: string): string {
+  let next = command.trim();
+  if (!/^(npm|pnpm|yarn|bun|cargo|go|pytest|python|python3|mvn|gradle)\b/i.test(next)) {
+    return next;
+  }
+  next = next.replace(/\s*2>&1\s*\|\s*head\s+-?\d+\s*$/i, '');
+  next = next.replace(/\s*\|\s*head\s+-?\d+\s*$/i, '');
+  next = next.replace(/\s*\|\s*tail\s+-?\d+\s*$/i, '');
+  next = next.replace(/\s*\|\s*sed\s+-n\s+['"]?1,\d+p['"]?\s*$/i, '');
+  return next.trim();
+}
+
 /**
  * Find the package.json content, checking both root and nested project paths.
  * In nested projects (user opened parent dir), the file might be at e.g. "website/package.json".
@@ -141,7 +154,7 @@ export function normalizeValidationCommand(
   getFileContent: (path: string) => string | undefined,
   files?: FileNode[],
 ): string {
-  const trimmed = raw?.trim() ?? '';
+  const trimmed = stripValidationOutputTruncation(raw?.trim() ?? '');
   const scripts = parsePackageScripts(getFileContent, files);
   const lower = trimmed.toLowerCase();
 
@@ -263,6 +276,85 @@ export function classifyFailure(
     return parts.join(':');
   }
 
+  function specialBuildMarker(text: string): string | null {
+    if (/multiple modules with names that only differ in casing/i.test(text) || /use equal casing/i.test(text)) {
+      return 'case_mismatch';
+    }
+    if (/unsupported server component type:\s*undefined/i.test(text)) {
+      return 'server_component_undefined';
+    }
+    if (/postcss plugin has moved to a separate package/i.test(text) || /you're trying to use.*tailwindcss.*directly as a postcss plugin/i.test(text)) {
+      return 'tailwind_v4_postcss';
+    }
+    const attemptedImport = text.match(/Attempted import error:\s*['"]([^'"]+)['"]\s+is not exported from\s+['"]([^'"]+)['"]/i);
+    if (attemptedImport) {
+      return `export_mismatch:${attemptedImport[1].slice(0, 40)}`;
+    }
+    const reexportMissing = text.match(/export\s+['"]([^'"]+)['"]\s+\(reexported as\s+['"]([^'"]+)['"]\)\s+was not found in\s+['"]([^'"]+)['"]/i);
+    if (reexportMissing) {
+      return `export_mismatch:${reexportMissing[2].slice(0, 40)}`;
+    }
+    return null;
+  }
+
+  const structuralBuild = specialBuildMarker(raw);
+  if (structuralBuild) {
+    return {
+      category: 'build_error',
+      packageManager,
+      failingPackage: structuralBuild,
+      arch,
+      os,
+      lockfile,
+      errorSignature: buildSignature('build_error', structuralBuild),
+    };
+  }
+
+  /**
+   * Webpack/Next: "Can't resolve '…'", Vite: "failed to resolve import …".
+   * Returns the first unresolved specifier that is a path alias or relative path
+   * (not an npm package like `react` or `@scope/pkg`).
+   */
+  function firstBundlerAliasOrRelativeSpecifier(text: string): string | null {
+    const isAliasOrRelative = (spec: string): boolean => {
+      const s = spec.trim();
+      if (!s) return false;
+      if (s.startsWith('.') || s.startsWith('/') || s.startsWith('~') || s.startsWith('#')) return true;
+      // `@/…` is the usual tsconfig path alias; `@scope/name` is an npm scoped package.
+      if (s.startsWith('@/') || s.startsWith('@@/')) return true;
+      return false;
+    };
+    const patterns = [
+      /can't resolve\s+['"]([^'"]+)['"]/gi,
+      /failed to resolve import\s+["']([^"']+)["']/gi,
+      /unable to resolve import\s+["']([^"']+)["']/gi,
+    ];
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const spec = m[1];
+        if (spec && isAliasOrRelative(spec)) return spec;
+      }
+    }
+    return null;
+  }
+
+  // Bundler could not resolve a source path / tsconfig alias — fix imports or
+  // create files, not `npm install @/foo`.
+  const aliasSpec = firstBundlerAliasOrRelativeSpecifier(raw);
+  if (aliasSpec) {
+    return {
+      category: 'build_error',
+      packageManager,
+      failingPackage: aliasSpec,
+      arch,
+      os,
+      lockfile,
+      errorSignature: buildSignature('build_error', aliasSpec),
+    };
+  }
+
   // ── npm 404 ──────────────────────────────────────────────────────────────
   if (combined.includes('npm error 404') || combined.includes('is not in this registry')) {
     const pkg = extractPackage();
@@ -292,8 +384,19 @@ export function classifyFailure(
   }
 
   // ── Missing dependency / module not found ─────────────────────────────────
-  if (combined.includes('cannot find module') || combined.includes('module not found') || combined.includes('enoent') && combined.includes('node_modules')) {
+  if (combined.includes('cannot find module') || combined.includes('module not found') || (combined.includes('enoent') && combined.includes('node_modules'))) {
     const pkg = extractPackage();
+    if (pkg && (pkg.startsWith('@/') || pkg.startsWith('@@/') || pkg.startsWith('./') || pkg.startsWith('../'))) {
+      return {
+        category: 'build_error',
+        packageManager,
+        failingPackage: pkg,
+        arch,
+        os,
+        lockfile,
+        errorSignature: buildSignature('build_error', pkg),
+      };
+    }
     return { category: 'missing_dependency', packageManager, failingPackage: pkg, arch, os, lockfile, errorSignature: buildSignature('missing_dependency', pkg) };
   }
 
@@ -419,7 +522,7 @@ export async function runProjectValidation(opts: RunValidationOptions): Promise<
   // Run the command exactly once — no retries, no pre-flight mutations.
   // The repair engine in dependencyRepairEngine.ts handles all retry logic.
   try {
-    const result = await executeCommand(command, cwd);
+    const result = await executeCommand(command, cwd, { timeoutMs: getLongRunningCommandTimeoutMs() });
     const pass = result.code === 0;
     return {
       pass,

@@ -5,10 +5,11 @@
  */
 
 import type { PlanStep } from '@/store/workbenchStore';
-import type { ModelConfig } from '@/store/modelStore';
+import { useModelStore, type ModelConfig } from '@/store/modelStore';
 import { isTauri, makeHttpRequest } from '@/lib/tauri';
 import type { ExecutionCallbacks } from './agentExecutorContext';
 import { addWebResearchContext, WEB_CONTENT_MAX_CHARS } from './agentExecutorContext';
+import { DEFAULT_HTTP_TIMEOUT_MS } from '@/config/runtimeTimeoutDefaults';
 
 /** Subset of ExecutionCallbacks for agent-tool web helpers. */
 export type AgentWebResearchHooks = {
@@ -144,16 +145,15 @@ export function htmlToText(html: string): string {
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
 
-const HTTP_REQUEST_TIMEOUT_MS = 30_000;
-
 /** Wraps makeHttpRequest with a hard timeout so a stalled HTTP call can't block plan execution. */
 export async function makeHttpRequestWithTimeout(url: string): ReturnType<typeof makeHttpRequest> {
+  const timeoutMs = useModelStore.getState().httpTimeoutMs || DEFAULT_HTTP_TIMEOUT_MS;
   return Promise.race([
     makeHttpRequest(url),
     new Promise<never>((_, reject) =>
       setTimeout(
-        () => reject(new Error(`HTTP request timed out after ${HTTP_REQUEST_TIMEOUT_MS / 1000}s: ${url.slice(0, 120)}`)),
-        HTTP_REQUEST_TIMEOUT_MS,
+        () => reject(new Error(`HTTP request timed out after ${Math.round(timeoutMs / 1000)}s: ${url.slice(0, 120)}`)),
+        timeoutMs,
       ),
     ),
   ]);

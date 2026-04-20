@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Cpu, Brain, Code, TestTube, Loader2, Github, Palette, FlaskConical, Heart } from 'lucide-react';
+import { Cpu, Brain, Code, TestTube, Loader2, Github, Palette, FlaskConical, Heart, Globe } from 'lucide-react';
 import { useTheme, type Theme } from '@/hooks/useTheme';
 import { useModelStore } from '@/store/modelStore';
 import { useTaskStore } from '@/store/taskStore';
 import { useGitStore } from '@/store/gitStore';
 import { useWorkbenchStore, CENTER_TAB_BENCHMARK } from '@/store/workbenchStore';
+import { useModeStore } from '@/store/modeStore';
+
+const CENTER_TAB_WEB = ':web';
 import { useProjectStore } from '@/store/projectStore';
 import { checkConnection } from '@/services/modelApi';
 import { refreshGitStatus, connectGithubWithToken } from '@/services/gitService';
@@ -36,7 +39,9 @@ const TopBar = () => {
   const closeProject = useProjectStore(s => s.closeProject);
   const [showGitSync, setShowGitSync] = useState(false);
   const [showHeartbeat, setShowHeartbeat] = useState(false);
+  const [showWebSetup, setShowWebSetup] = useState(false);
   const aiIsStreaming = useWorkbenchStore(s => s.aiIsStreaming);
+  const { webModeEnabled, setWebModeEnabled } = useModeStore();
 
   const orchestratorModel = getModelForRole('orchestrator');
   const coder = getModelForRole('coder');
@@ -194,6 +199,59 @@ const TopBar = () => {
           <FlaskConical className="h-3 w-3" />
           <span className="hidden lg:inline">Benchmark</span>
         </button>
+
+        {/* Web / Browser mode button */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              if (!webModeEnabled) {
+                setShowWebSetup(true);
+              } else {
+                setActiveCenterTab(activeCenterTab === CENTER_TAB_WEB ? 'chat' : CENTER_TAB_WEB);
+              }
+            }}
+            title="Browser automation"
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${
+              activeCenterTab === CENTER_TAB_WEB
+                ? 'text-primary bg-primary/10'
+                : webModeEnabled
+                ? 'text-muted-foreground hover:text-foreground hover:bg-surface-hover'
+                : 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-surface-hover'
+            }`}
+          >
+            <Globe className="h-3 w-3" />
+            <span className="hidden lg:inline">Web</span>
+          </button>
+          {showWebSetup && (
+            <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg p-4 w-[320px]">
+              <h3 className="font-semibold text-sm mb-2">Enable Browser Automation?</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                This feature lets the AI control a browser to research, fill forms, and automate web tasks.
+              </p>
+              <p className="text-xs text-muted-foreground mb-3">
+                <strong>First run only:</strong> Downloads Chromium (~150MB) and installs browser dependencies.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowWebSetup(false)}
+                  className="px-3 py-1.5 text-xs rounded-md bg-secondary hover:bg-secondary/80 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setWebModeEnabled(true);
+                    setShowWebSetup(false);
+                    setActiveCenterTab(CENTER_TAB_WEB);
+                  }}
+                  className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  Enable Web Mode
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Heartbeat — agent loop settings */}
         <div className="relative">

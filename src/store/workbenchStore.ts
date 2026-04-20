@@ -56,6 +56,8 @@ export interface PlanStep {
   action: 'create_file' | 'edit_file' | 'delete_file' | 'run_command' | 'web_search' | 'fetch_url';
   path?: string;
   command?: string;
+  /** Full file content for deterministic create_file steps. */
+  content?: string;
   description: string;
   status: 'pending' | 'running' | 'repairing' | 'done' | 'error';
   /** Set when status is error — execution or verification failure reason */
@@ -105,7 +107,7 @@ export interface TerminalTab {
   output: string[];
 }
 
-export type AppMode = 'ask' | 'plan' | 'build' | 'chat' | 'agent';
+export type AppMode = 'ask' | 'plan' | 'build' | 'chat' | 'agent' | 'web';
 
 /** Reserved center tab id for the execution plan (not a file path). */
 export const CENTER_TAB_PLAN = ':plan';
@@ -155,6 +157,9 @@ interface WorkbenchState {
   aiLiveTokPerSec: number | null;
   /** Accumulated total tokens consumed this session (across all turns) */
   aiSessionTotalTokens: number;
+  /** Session tokens broken down by role */
+  aiSessionOrchestratorTokens: number;
+  aiSessionCoderTokens: number;
   /** Date.now() timestamp of when the first message was sent in this session */
   aiSessionStartTime: number | null;
   /** Estimated current context window usage in tokens */
@@ -168,7 +173,7 @@ interface WorkbenchState {
     contextLimit?: number;
   }) => void;
   /** Call when a turn completes — adds the turn's token count to the session total */
-  addAiSessionTokens: (tokens: number) => void;
+  addAiSessionTokens: (tokens: number, role?: 'orchestrator' | 'coder') => void;
   /** Called when a new session starts (bumpChatSession) — resets session counters */
   resetAiSessionStats: () => void;
 
@@ -348,6 +353,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
   aiIsStreaming: false,
   aiLiveTokPerSec: null,
   aiSessionTotalTokens: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').total ?? 0; } catch { return 0; } })(),
+  aiSessionOrchestratorTokens: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').orchestrator ?? 0; } catch { return 0; } })(),
+  aiSessionCoderTokens: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').coder ?? 0; } catch { return 0; } })(),
   aiSessionStartTime: (() => { try { return JSON.parse(localStorage.getItem('scout-token-stats') ?? '{}').start ?? null; } catch { return null; } })(),
   aiContextUsed: 0,
   aiContextLimit: 0,
@@ -360,16 +367,25 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => ({
     aiContextUsed: patch.contextUsed ?? s.aiContextUsed,
     aiContextLimit: patch.contextLimit ?? s.aiContextLimit,
   })),
-  addAiSessionTokens: (tokens) => set(s => {
+  addAiSessionTokens: (tokens, role = 'orchestrator') => set(s => {
     const newTotal = s.aiSessionTotalTokens + tokens;
+    const newOrch = role === 'orchestrator' ? s.aiSessionOrchestratorTokens + tokens : s.aiSessionOrchestratorTokens;
+    const newCoder = role === 'coder' ? s.aiSessionCoderTokens + tokens : s.aiSessionCoderTokens;
     const startTime = s.aiSessionStartTime ?? Date.now();
-    try { localStorage.setItem('scout-token-stats', JSON.stringify({ total: newTotal, start: startTime })); } catch {}
-    return { aiSessionTotalTokens: newTotal, aiSessionStartTime: startTime };
+    try { localStorage.setItem('scout-token-stats', JSON.stringify({ total: newTotal, orchestrator: newOrch, coder: newCoder, start: startTime })); } catch {}
+    return { 
+      aiSessionTotalTokens: newTotal, 
+      aiSessionOrchestratorTokens: newOrch,
+      aiSessionCoderTokens: newCoder,
+      aiSessionStartTime: startTime 
+    };
   }),
   resetAiSessionStats: () => {
     try { localStorage.removeItem('scout-token-stats'); } catch {}
     return set({
       aiSessionTotalTokens: 0,
+      aiSessionOrchestratorTokens: 0,
+      aiSessionCoderTokens: 0,
       aiSessionStartTime: null,
       aiIsStreaming: false,
       aiLiveTokPerSec: null,

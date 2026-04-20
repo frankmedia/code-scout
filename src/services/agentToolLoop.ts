@@ -22,6 +22,7 @@ import {
   DEFAULT_AGENT_VERIFY_FAIL_WEB_NUDGE_AFTER,
 } from '@/config/agentBehaviorDefaults';
 import type { ModelConfig } from '@/store/modelStore';
+import { useModelStore } from '@/store/modelStore';
 import type { ToolInvocation } from '@/store/workbenchStore';
 import { isTauri, executeCommand } from '@/lib/tauri';
 import {
@@ -45,6 +46,10 @@ import { resolveProjectRoot } from './validationRunner';
 import { formatEnvForPrompt, type EnvironmentInfo } from './environmentProbe';
 import { useWorkbenchStore } from '@/store/workbenchStore';
 import { setLastDevServerUrl } from '@/store/workbenchStoreTypes';
+import {
+  DEFAULT_MODEL_IDLE_TIMEOUT_MS,
+  DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS,
+} from '@/config/runtimeTimeoutDefaults';
 
 // Re-export the definition and executor symbols so existing imports keep working
 export { FINISH_TASK_TOOL, DELEGATE_TO_CODER_TOOL, buildAgentTools, ALL_AGENT_TOOLS };
@@ -61,6 +66,26 @@ function clipTimelineText(s: string, max: number): string {
 
 /** Re-fire `onStatus` while the HTTP stream has not completed — keeps UI heartbeat from false "stalled" during long TTFT (common on free APIs). */
 const MODEL_WAIT_KEEPALIVE_MS = 20_000;
+
+function combineAbortSignals(external: AbortSignal | undefined, internal: AbortController): AbortSignal {
+  if (!external) return internal.signal;
+  const anyFn = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') {
+    try {
+      return anyFn([external, internal.signal]);
+    } catch {
+      // Fall through to manual wiring.
+    }
+  }
+  if (external.aborted) {
+    if (!internal.signal.aborted) internal.abort(external.reason);
+    return internal.signal;
+  }
+  external.addEventListener('abort', () => {
+    if (!internal.signal.aborted) internal.abort(external.reason);
+  }, { once: true });
+  return internal.signal;
+}
 
 /**
  * Appended to the `delegate_to_coder` tool result so the orchestrator must explicitly
@@ -465,16 +490,35 @@ async function runCoderSubLoop(opts: {
 
     const coderToolChoice = (coderConsecutiveNoTools > 0 && !coderRequiredFailed) ? ('required' as const) : ('auto' as const);
 
-    const CODER_REQUIRED_TTFT_MS = 120_000;
-    let coderDeadlineCtrl: AbortController | undefined;
+    const CODER_REQUIRED_TTFT_MS =
+      useModelStore.getState().requiredToolFirstTokenTimeoutMs || DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS;
     let coderDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    let coderRoundSignal = signal;
+    const coderRoundCtrl = new AbortController();
+    const coderRoundSignal = combineAbortSignals(signal, coderRoundCtrl);
+    let coderIdleTimer: ReturnType<typeof setTimeout> | undefined;
+    let coderStreamTimedOut = false;
+    let coderLastProviderActivityAt = Date.now();
+    let coderStallWarned = false;
+    const coderModelIdleTimeoutMs = useModelStore.getState().modelStreamIdleTimeoutMs || DEFAULT_MODEL_IDLE_TIMEOUT_MS;
+    const armCoderIdleTimer = () => {
+      if (coderIdleTimer) clearTimeout(coderIdleTimer);
+      coderIdleTimer = setTimeout(() => {
+        coderStreamTimedOut = true;
+        if (!coderRoundCtrl.signal.aborted) {
+          coderRoundCtrl.abort(
+            new DOMException(
+              `Coder stream idle for ${Math.round(coderModelIdleTimeoutMs / 1000)}s`,
+              'TimeoutError',
+            ),
+          );
+        }
+      }, coderModelIdleTimeoutMs);
+    };
 
     if (coderToolChoice === 'required') {
-      coderDeadlineCtrl = new AbortController();
       coderDeadlineTimer = setTimeout(() => {
-        if (!coderFirstToken && coderDeadlineCtrl && !coderDeadlineCtrl.signal.aborted) {
-          coderDeadlineCtrl.abort(
+        if (!coderFirstToken && !coderRoundCtrl.signal.aborted) {
+          coderRoundCtrl.abort(
             new DOMException(
               `Coder tool_choice=required: no first token in ${CODER_REQUIRED_TTFT_MS / 1000}s`,
               'TimeoutError',
@@ -482,40 +526,44 @@ async function runCoderSubLoop(opts: {
           );
         }
       }, CODER_REQUIRED_TTFT_MS);
-      if (signal) {
-        const anyFn = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-        if (typeof anyFn === 'function') {
-          try { coderRoundSignal = anyFn([signal, coderDeadlineCtrl.signal]); }
-          catch { signal.addEventListener('abort', () => coderDeadlineCtrl!.abort(signal!.reason), { once: true }); coderRoundSignal = coderDeadlineCtrl.signal; }
-        } else {
-          signal.addEventListener('abort', () => coderDeadlineCtrl!.abort(signal!.reason), { once: true });
-          coderRoundSignal = coderDeadlineCtrl.signal;
-        }
-      } else {
-        coderRoundSignal = coderDeadlineCtrl.signal;
-      }
     }
 
     const coderWaitStarted = Date.now();
-    let coderWaitKeepalive: ReturnType<typeof setInterval> | undefined;
-    coderWaitKeepalive = setInterval(() => {
-      const sec = Math.round((Date.now() - coderWaitStarted) / 1000);
-      callbacks.onStatus(`${coderWaitBase} · ${sec}s on provider…`);
-    }, MODEL_WAIT_KEEPALIVE_MS);
+    const coderWaitKeepalive: ReturnType<typeof setInterval> | undefined = effectiveHeartbeatMs > 0
+      ? setInterval(() => {
+        const sec = Math.round((Date.now() - coderWaitStarted) / 1000);
+        callbacks.onStatus(`${coderWaitBase} · ${sec}s on provider…`);
+        if (effectiveStallWarningMs > 0 && (Date.now() - coderLastProviderActivityAt) >= effectiveStallWarningMs) {
+          const idleSec = Math.round((Date.now() - coderLastProviderActivityAt) / 1000);
+          callbacks.onLog(
+            `Coder has produced no provider output for ${idleSec}s. The request may be stalled even though the task is still marked active.`,
+            coderStallWarned ? 'warning' : 'info',
+          );
+          coderStallWarned = true;
+        }
+      }, effectiveHeartbeatMs)
+      : undefined;
 
     try {
+      armCoderIdleTimer();
       await new Promise<void>((resolve, reject) => {
         callModel(
           modelToRequest(coderModel, messages, { tools: coderTools, signal: coderRoundSignal, tool_choice: coderToolChoice }),
           (chunk) => {
             coderFirstToken = true;
+            coderLastProviderActivityAt = Date.now();
+            coderStallWarned = false;
             if (coderDeadlineTimer) { clearTimeout(coderDeadlineTimer); coderDeadlineTimer = undefined; }
+            armCoderIdleTimer();
             fullText += chunk;
             callbacks.onChunk(chunk);
           },
           (text, meta) => {
             coderFirstToken = true;
+            coderLastProviderActivityAt = Date.now();
+            coderStallWarned = false;
             if (coderDeadlineTimer) { clearTimeout(coderDeadlineTimer); coderDeadlineTimer = undefined; }
+            if (coderIdleTimer) { clearTimeout(coderIdleTimer); coderIdleTimer = undefined; }
             fullText = text;
             toolCalls = meta?.toolCalls ?? [];
             if (!toolCalls.length) {
@@ -532,6 +580,7 @@ async function runCoderSubLoop(opts: {
           },
           (err) => {
             if (coderDeadlineTimer) { clearTimeout(coderDeadlineTimer); coderDeadlineTimer = undefined; }
+            if (coderIdleTimer) { clearTimeout(coderIdleTimer); coderIdleTimer = undefined; }
             if (err.name === 'AbortError' || err.name === 'TimeoutError') {
               if (coderToolChoice === 'required' && !coderFirstToken && !signal?.aborted) {
                 coderRequiredTimedOut = true;
@@ -549,6 +598,7 @@ async function runCoderSubLoop(opts: {
     } finally {
       if (coderWaitKeepalive) clearInterval(coderWaitKeepalive);
       if (coderDeadlineTimer) { clearTimeout(coderDeadlineTimer); coderDeadlineTimer = undefined; }
+      if (coderIdleTimer) { clearTimeout(coderIdleTimer); coderIdleTimer = undefined; }
     }
 
     // ── Recover from tool_choice=required hang ────────────────────────────
@@ -560,6 +610,14 @@ async function runCoderSubLoop(opts: {
       );
       callbacks.onTimeline?.(`Coder r${round} · tool_choice=required timed out · switching to auto`);
       continue;
+    }
+
+    if (coderStreamTimedOut && !signal?.aborted) {
+      callbacks.onLog(
+        `Coder r${round}: stream stalled for ${Math.round(coderModelIdleTimeoutMs / 1000)}s — treating this as a no-tool round.`,
+        'warning',
+      );
+      callbacks.onTimeline?.(`Coder r${round} · stream stalled · ${Math.round(coderModelIdleTimeoutMs / 1000)}s idle`);
     }
 
     // ── Recover from context-window-exceeded errors ───────────────────────
@@ -709,6 +767,10 @@ export async function runAgentToolLoop(opts: {
   maxFileReadChars?: number;
   /** Ms to wait after launching a background process before continuing. */
   backgroundSettleMs?: number;
+  /** Agent heartbeat cadence for long model waits. Set 0 to disable. */
+  heartbeatIntervalMs?: number;
+  /** Warn if a model round produces no provider output for this long. Set 0 to disable. */
+  stallWarningAfterMs?: number;
   /** Pre-resolved scaffold hint from scaffoldRegistry — forwarded to the Coder sub-loop */
   scaffoldHint?: string;
   /** Runtime environment info — forwarded to the Coder sub-loop so it always knows the platform */
@@ -717,12 +779,14 @@ export async function runAgentToolLoop(opts: {
   const {
     model, coderModel, systemPrompt, initialMessages, projectPath, validationCommand,
     signal, callbacks, maxNoToolRounds, maxRounds, repetitionNudgeAt, repetitionExitAt,
-    maxCoderRounds, maxFileReadChars, backgroundSettleMs, scaffoldHint, envInfo,
+    maxCoderRounds, maxFileReadChars, backgroundSettleMs, heartbeatIntervalMs, stallWarningAfterMs, scaffoldHint, envInfo,
   } = opts;
   const noToolLimit = (maxNoToolRounds != null && maxNoToolRounds > 0) ? maxNoToolRounds : DEFAULT_AGENT_MAX_NO_TOOL_ROUNDS;
   const roundLimit = (maxRounds != null && maxRounds > 0) ? maxRounds : DEFAULT_AGENT_MAX_ROUNDS;
   const nudgeAt = (repetitionNudgeAt != null && repetitionNudgeAt > 0) ? repetitionNudgeAt : DEFAULT_AGENT_REPETITION_NUDGE_AT;
   const exitAt = (repetitionExitAt != null && repetitionExitAt > 0) ? repetitionExitAt : DEFAULT_AGENT_REPETITION_EXIT_AT;
+  const effectiveHeartbeatMs = heartbeatIntervalMs ?? MODEL_WAIT_KEEPALIVE_MS;
+  const effectiveStallWarningMs = stallWarningAfterMs ?? 0;
 
   const withCoder = !!coderModel && coderModel.enabled;
   const agentTools = buildAgentTools(withCoder);
@@ -801,16 +865,35 @@ export async function runAgentToolLoop(opts: {
     // When tool_choice=required, add a 120s first-token deadline.
     // Some models (e.g. Gemma on llama-cpp) hang indefinitely under grammar-
     // constrained decoding — abort fast and switch to auto for future rounds.
-    const REQUIRED_TTFT_MS = 120_000;
-    let orchDeadlineCtrl: AbortController | undefined;
+    const REQUIRED_TTFT_MS =
+      useModelStore.getState().requiredToolFirstTokenTimeoutMs || DEFAULT_REQUIRED_TOOL_FIRST_TOKEN_TIMEOUT_MS;
     let orchDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    let orchRoundSignal = signal;
+    const orchRoundCtrl = new AbortController();
+    const orchRoundSignal = combineAbortSignals(signal, orchRoundCtrl);
+    let orchIdleTimer: ReturnType<typeof setTimeout> | undefined;
+    let orchStreamTimedOut = false;
+    let orchLastProviderActivityAt = Date.now();
+    let orchStallWarned = false;
+    const orchModelIdleTimeoutMs = useModelStore.getState().modelStreamIdleTimeoutMs || DEFAULT_MODEL_IDLE_TIMEOUT_MS;
+    const armOrchIdleTimer = () => {
+      if (orchIdleTimer) clearTimeout(orchIdleTimer);
+      orchIdleTimer = setTimeout(() => {
+        orchStreamTimedOut = true;
+        if (!orchRoundCtrl.signal.aborted) {
+          orchRoundCtrl.abort(
+            new DOMException(
+              `Orchestrator stream idle for ${Math.round(orchModelIdleTimeoutMs / 1000)}s`,
+              'TimeoutError',
+            ),
+          );
+        }
+      }, orchModelIdleTimeoutMs);
+    };
 
     if (toolChoice === 'required') {
-      orchDeadlineCtrl = new AbortController();
       orchDeadlineTimer = setTimeout(() => {
-        if (!orchFirstToken && orchDeadlineCtrl && !orchDeadlineCtrl.signal.aborted) {
-          orchDeadlineCtrl.abort(
+        if (!orchFirstToken && !orchRoundCtrl.signal.aborted) {
+          orchRoundCtrl.abort(
             new DOMException(
               `tool_choice=required: no first token in ${REQUIRED_TTFT_MS / 1000}s — model may not support forced tool calling`,
               'TimeoutError',
@@ -818,37 +901,34 @@ export async function runAgentToolLoop(opts: {
           );
         }
       }, REQUIRED_TTFT_MS);
-      // Combine user abort signal + deadline
-      if (signal) {
-        const anyFn = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-        if (typeof anyFn === 'function') {
-          try { orchRoundSignal = anyFn([signal, orchDeadlineCtrl.signal]); }
-          catch { signal.addEventListener('abort', () => orchDeadlineCtrl!.abort(signal!.reason), { once: true }); orchRoundSignal = orchDeadlineCtrl.signal; }
-        } else {
-          signal.addEventListener('abort', () => orchDeadlineCtrl!.abort(signal!.reason), { once: true });
-          orchRoundSignal = orchDeadlineCtrl.signal;
-        }
-      } else {
-        orchRoundSignal = orchDeadlineCtrl.signal;
-      }
     }
 
     const orchWaitStarted = Date.now();
-    let orchWaitKeepalive: ReturnType<typeof setInterval> | undefined;
     let orchSlowHintLogged = false;
-    orchWaitKeepalive = setInterval(() => {
-      const sec = Math.round((Date.now() - orchWaitStarted) / 1000);
-      callbacks.onStatus(`${orchWaitBase} · ${sec}s on provider…`);
-      if (!orchSlowHintLogged) {
-        orchSlowHintLogged = true;
-        callbacks.onLog(
-          'Still waiting on the model API (no first token yet). Busy or free tiers often need 30–120s; the request aborts automatically after the stream timeout if the server never responds.',
-          'info',
-        );
-      }
-    }, MODEL_WAIT_KEEPALIVE_MS);
+    const orchWaitKeepalive: ReturnType<typeof setInterval> | undefined = effectiveHeartbeatMs > 0
+      ? setInterval(() => {
+        const sec = Math.round((Date.now() - orchWaitStarted) / 1000);
+        callbacks.onStatus(`${orchWaitBase} · ${sec}s on provider…`);
+        if (!orchSlowHintLogged) {
+          orchSlowHintLogged = true;
+          callbacks.onLog(
+            'Still waiting on the model API (no first token yet). Busy or free tiers often need 30–120s; the request aborts automatically after the stream timeout if the server never responds.',
+            'info',
+          );
+        }
+        if (effectiveStallWarningMs > 0 && (Date.now() - orchLastProviderActivityAt) >= effectiveStallWarningMs) {
+          const idleSec = Math.round((Date.now() - orchLastProviderActivityAt) / 1000);
+          callbacks.onLog(
+            `Orchestrator has produced no provider output for ${idleSec}s. The request may be stalled even though the task is still marked active.`,
+            orchStallWarned ? 'warning' : 'info',
+          );
+          orchStallWarned = true;
+        }
+      }, effectiveHeartbeatMs)
+      : undefined;
 
     try {
+      armOrchIdleTimer();
       await new Promise<void>((resolve, reject) => {
         callModel(
           modelToRequest(model, messages, {
@@ -858,13 +938,19 @@ export async function runAgentToolLoop(opts: {
           }),
           (chunk) => {
             orchFirstToken = true;
+            orchLastProviderActivityAt = Date.now();
+            orchStallWarned = false;
             if (orchDeadlineTimer) { clearTimeout(orchDeadlineTimer); orchDeadlineTimer = undefined; }
+            armOrchIdleTimer();
             fullText += chunk;
             callbacks.onChunk(chunk);
           },
           (text, meta) => {
             orchFirstToken = true;
+            orchLastProviderActivityAt = Date.now();
+            orchStallWarned = false;
             if (orchDeadlineTimer) { clearTimeout(orchDeadlineTimer); orchDeadlineTimer = undefined; }
+            if (orchIdleTimer) { clearTimeout(orchIdleTimer); orchIdleTimer = undefined; }
             fullText = text;
             toolCalls = meta?.toolCalls ?? [];
             if (!toolCalls.length) {
@@ -882,6 +968,7 @@ export async function runAgentToolLoop(opts: {
           },
           (err) => {
             if (orchDeadlineTimer) { clearTimeout(orchDeadlineTimer); orchDeadlineTimer = undefined; }
+            if (orchIdleTimer) { clearTimeout(orchIdleTimer); orchIdleTimer = undefined; }
             if (err.name === 'AbortError' || err.name === 'TimeoutError') {
               // Distinguish required-deadline abort from user abort
               if (toolChoice === 'required' && !orchFirstToken && !signal?.aborted) {
@@ -906,6 +993,7 @@ export async function runAgentToolLoop(opts: {
     } finally {
       if (orchWaitKeepalive) clearInterval(orchWaitKeepalive);
       if (orchDeadlineTimer) { clearTimeout(orchDeadlineTimer); orchDeadlineTimer = undefined; }
+      if (orchIdleTimer) { clearTimeout(orchIdleTimer); orchIdleTimer = undefined; }
     }
 
     // ── Recover from tool_choice=required hang ────────────────────────────
@@ -917,6 +1005,14 @@ export async function runAgentToolLoop(opts: {
       );
       callbacks.onTimeline?.(`Orchestrator r${round} · tool_choice=required timed out · switching to auto`);
       continue; // retry this round with auto
+    }
+
+    if (orchStreamTimedOut && !signal?.aborted) {
+      callbacks.onLog(
+        `Orchestrator r${round}: stream stalled for ${Math.round(orchModelIdleTimeoutMs / 1000)}s — treating this as a no-tool round.`,
+        'warning',
+      );
+      callbacks.onTimeline?.(`Orchestrator r${round} · stream stalled · ${Math.round(orchModelIdleTimeoutMs / 1000)}s idle`);
     }
 
     // ── Recover from context-window-exceeded errors ───────────────────────

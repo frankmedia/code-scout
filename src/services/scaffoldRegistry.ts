@@ -11,6 +11,7 @@
  */
 
 import { isTauri, makeHttpRequest } from '@/lib/tauri';
+import { useScaffoldStore } from '@/store/scaffoldStore';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,8 +216,7 @@ const ARCHETYPES: ScaffoldArchetype[] = [
       { ecosystem: 'npm', name: '@types/react', dev: true },
       { ecosystem: 'npm', name: '@types/react-dom', dev: true },
       { ecosystem: 'npm', name: 'tailwindcss', dev: true },
-      { ecosystem: 'npm', name: 'postcss', dev: true },
-      { ecosystem: 'npm', name: 'autoprefixer', dev: true },
+      { ecosystem: 'npm', name: '@tailwindcss/vite', dev: true },
       { ecosystem: 'npm', name: 'clsx' },
       { ecosystem: 'npm', name: 'tailwind-merge' },
     ],
@@ -240,11 +240,10 @@ const ARCHETYPES: ScaffoldArchetype[] = [
     "tailwind-merge": "{{PKG:npm:tailwind-merge}}"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "{{PKG:npm:@tailwindcss/vite}}",
     "@types/react": "{{PKG:npm:@types/react}}",
     "@types/react-dom": "{{PKG:npm:@types/react-dom}}",
     "@vitejs/plugin-react": "{{PKG:npm:@vitejs/plugin-react}}",
-    "autoprefixer": "{{PKG:npm:autoprefixer}}",
-    "postcss": "{{PKG:npm:postcss}}",
     "tailwindcss": "{{PKG:npm:tailwindcss}}",
     "typescript": "{{PKG:npm:typescript}}",
     "vite": "{{PKG:npm:vite}}"
@@ -270,28 +269,11 @@ const ARCHETYPES: ScaffoldArchetype[] = [
         path: 'vite.config.ts',
         content: `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
 });`,
-      },
-      {
-        path: 'postcss.config.js',
-        content: `export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-};`,
-      },
-      {
-        path: 'tailwind.config.js',
-        content: `/** @type {import('tailwindcss').Config} */
-export default {
-  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
-  theme: { extend: {} },
-  plugins: [],
-};`,
       },
       {
         path: 'tsconfig.json',
@@ -318,9 +300,7 @@ export default {
       },
       {
         path: 'src/index.css',
-        content: `@tailwind base;
-@tailwind components;
-@tailwind utilities;`,
+        content: `@import "tailwindcss";`,
       },
       {
         path: 'src/main.tsx',
@@ -385,8 +365,7 @@ dist
       { ecosystem: 'npm', name: '@types/react', dev: true },
       { ecosystem: 'npm', name: '@types/react-dom', dev: true },
       { ecosystem: 'npm', name: 'tailwindcss', dev: true },
-      { ecosystem: 'npm', name: 'postcss', dev: true },
-      { ecosystem: 'npm', name: 'autoprefixer', dev: true },
+      { ecosystem: 'npm', name: '@tailwindcss/postcss', dev: true },
     ],
     files: [
       {
@@ -409,11 +388,10 @@ dist
     "tailwind-merge": "{{PKG:npm:tailwind-merge}}"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "{{PKG:npm:@tailwindcss/postcss}}",
     "@types/node": "{{PKG:npm:@types/node}}",
     "@types/react": "{{PKG:npm:@types/react}}",
     "@types/react-dom": "{{PKG:npm:@types/react-dom}}",
-    "autoprefixer": "{{PKG:npm:autoprefixer}}",
-    "postcss": "{{PKG:npm:postcss}}",
     "tailwindcss": "{{PKG:npm:tailwindcss}}",
     "typescript": "{{PKG:npm:typescript}}"
   }
@@ -424,8 +402,7 @@ dist
         content: `/** @type {import('postcss-load-config').Config} */
 const config = {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    "@tailwindcss/postcss": {},
   },
 };
 export default config;`,
@@ -473,9 +450,7 @@ export default config;`,
       },
       {
         path: 'src/app/globals.css',
-        content: `@tailwind base;
-@tailwind components;
-@tailwind utilities;`,
+        content: `@import "tailwindcss";`,
       },
       {
         path: 'src/app/layout.tsx',
@@ -629,9 +604,7 @@ export default defineConfig({
       },
       {
         path: 'src/style.css',
-        content: `@tailwind base;
-@tailwind components;
-@tailwind utilities;`,
+        content: `@import "tailwindcss";`,
       },
       {
         path: 'src/main.ts',
@@ -939,21 +912,84 @@ export async function buildScaffoldPrompt(
   const arch = matchArchetype(framework, language);
   if (!arch) return null;
 
-  // Resolve all package versions in parallel
-  const versions = await resolveVersions(arch.packages);
+  // Get user customizations for this archetype
+  const customization = useScaffoldStore.getState().getCustomization(arch.id);
 
-  const fileList = arch.files.map((f, i) => {
-    const content = applyVersions(
+  // Merge base packages with user's extra packages
+  const allPackages: PackageRef[] = [
+    ...arch.packages,
+    ...customization.extraPackages.map(p => ({ ecosystem: 'npm' as Ecosystem, name: p.name, dev: p.dev })),
+  ];
+
+  // Filter out Tailwind if disabled
+  const packages = customization.includeTailwind
+    ? allPackages
+    : allPackages.filter(p => !p.name.includes('tailwind'));
+
+  // Resolve all package versions in parallel
+  const versions = await resolveVersions(packages);
+
+  // Filter files based on customization
+  let files = arch.files;
+  if (!customization.includeTailwind) {
+    files = files.filter(f =>
+      !f.path.includes('tailwind.config') &&
+      !f.path.includes('postcss.config')
+    );
+  }
+
+  // Modify tsconfig for strict mode setting
+  if (!customization.strictTypeScript) {
+    files = files.map(f => {
+      if (f.path.includes('tsconfig.json')) {
+        return {
+          ...f,
+          content: f.content.replace('"strict": true', '"strict": false'),
+        };
+      }
+      return f;
+    });
+  }
+
+  const fileList = files.map((f, i) => {
+    let content = applyVersions(
       f.content.replace(/PROJECT_NAME/g, projectName),
       versions,
     );
+
+    // Add custom CSS if this is the globals/main CSS file
+    if (customization.customCss && (f.path.includes('globals.css') || f.path.includes('index.css') || f.path.includes('style.css'))) {
+      content = content + '\n\n' + customization.customCss;
+    }
+
+    // Update package.json with extra packages
+    if (f.path === 'package.json' && customization.extraPackages.length > 0) {
+      try {
+        const pkg = JSON.parse(content);
+        for (const extra of customization.extraPackages) {
+          const v = versions.get(cacheKey('npm', extra.name)) ?? 'latest';
+          if (extra.dev) {
+            pkg.devDependencies = pkg.devDependencies || {};
+            pkg.devDependencies[extra.name] = v;
+          } else {
+            pkg.dependencies = pkg.dependencies || {};
+            pkg.dependencies[extra.name] = v;
+          }
+        }
+        content = JSON.stringify(pkg, null, 2);
+      } catch {
+        // If JSON parsing fails, leave content as-is
+      }
+    }
+
     return `${i + 1}. \`${f.path}\`:\n\`\`\`\n${content}\n\`\`\``;
   }).join('\n\n');
 
-  const pkgSummary = arch.packages.length > 0
-    ? `\nKey packages (versions resolved from registry):\n${arch.packages.map(p => {
+  const pkgSummary = packages.length > 0
+    ? `\nKey packages (versions resolved from registry):\n${packages.map(p => {
         const v = versions.get(cacheKey(p.ecosystem, p.name)) ?? 'latest';
-        return `- ${p.name}@${v}${p.dev ? ' (dev)' : ''}`;
+        const isExtra = customization.extraPackages.some(e => e.name === p.name);
+        return `- ${p.name}@${v}${p.dev ? ' (dev)' : ''}${isExtra ? ' [custom]' : ''}`;
       }).join('\n')}`
     : '';
 
@@ -979,10 +1015,23 @@ CRITICAL: Do NOT skip any file above. Do NOT run build/dev commands before insta
 export async function buildScaffoldHint(framework: string, language: string): Promise<string | null> {
   const arch = matchArchetype(framework, language);
   if (!arch) return null;
-  const versions = await resolveVersions(arch.packages);
+
+  // Get user customizations
+  const customization = useScaffoldStore.getState().getCustomization(arch.id);
+
+  // Merge packages
+  const allPackages: PackageRef[] = [
+    ...arch.packages,
+    ...customization.extraPackages.map(p => ({ ecosystem: 'npm' as Ecosystem, name: p.name, dev: p.dev })),
+  ];
+  const packages = customization.includeTailwind
+    ? allPackages
+    : allPackages.filter(p => !p.name.includes('tailwind'));
+
+  const versions = await resolveVersions(packages);
   const filePaths = arch.files.map(f => f.path).join(', ');
-  const pkgList = arch.packages.length > 0
-    ? arch.packages.map(p => {
+  const pkgList = packages.length > 0
+    ? packages.map(p => {
         const v = versions.get(cacheKey(p.ecosystem, p.name)) ?? 'latest';
         return `${p.name}@${v}`;
       }).join(', ')

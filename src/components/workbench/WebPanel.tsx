@@ -6,7 +6,7 @@
  * UI matches the coding mode's plan card style.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
 import {
   Send,
   Globe,
@@ -27,6 +27,7 @@ import {
   Download,
   Image,
   FormInput,
+  FolderOpen,
 } from 'lucide-react';
 import { useModeStore } from '@/store/modeStore';
 import { useModelStore } from '@/store/modelStore';
@@ -44,7 +45,7 @@ import {
   startBrowserAgent,
 } from '@/services/browserService';
 import { runWebAgentLoop, type WebAgentAction } from '@/services/webAgentLoop';
-import { initWebFolder } from '@/services/browserExecutor';
+import { initWebFolder, getSavedWebFiles, subscribeSavedWebFiles, type WebSavedFile } from '@/services/browserExecutor';
 import { ChatMarkdown } from './ChatMarkdown';
 
 // Action icons matching coding mode style
@@ -162,15 +163,17 @@ function StepRow({ step }: { step: WebStep }) {
   );
 }
 
+const WELCOME_MESSAGES: WebMessage[] = [
+  {
+    id: 'welcome',
+    role: 'assistant',
+    content: '🌐 **Web Automation**\n\nI control a browser step-by-step, adapting to what I find on each page. Tell me a URL and what you need — I\'ll handle navigation, extraction, form filling, and saving results.',
+    timestamp: Date.now(),
+  },
+];
+
 const WebPanel = () => {
-  const [messages, setMessages] = useState<WebMessage[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: `🌐 **Web Automation**\n\nI control a browser step-by-step, adapting to what I find on each page.\n\n**Try:** "Go to elsewhen.com and fill the contact form with dummy data"`,
-      timestamp: Date.now(),
-    },
-  ]);
+  const [messages, setMessages] = useState<WebMessage[]>(WELCOME_MESSAGES);
   const [input, setInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -189,13 +192,20 @@ const WebPanel = () => {
   } = useModeStore();
 
   const getActiveModel = useModelStore(s => s.getModelForRole);
+  const setSettingsOpen = useModelStore(s => s.setSettingsOpen);
   const setActiveCenterTab = useWorkbenchStore(s => s.setActiveCenterTab);
+  const openFileInEditor = useWorkbenchStore(s => s.openFile);
   const addAiSessionTokens = useWorkbenchStore(s => s.addAiSessionTokens);
   const recordTokens = useActivityStore(s => s.recordTokens);
+
+  const savedWebFiles = useSyncExternalStore(subscribeSavedWebFiles, getSavedWebFiles);
   
   // Web session tracking
   const activeProjectId = useProjectStore(s => s.activeProjectId);
-  const { createSession, updateSession } = useWebSessionStore();
+  const { createSession, updateSession, saveMessages: saveSessionMessages, getMessages: getSessionMessages } = useWebSessionStore();
+  const activeWebSessionId = useWebSessionStore(s =>
+    activeProjectId ? (s.activeSessionByProject[activeProjectId] ?? null) : null,
+  );
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const [webSessionTokens, setWebSessionTokens] = useState({ 
@@ -206,14 +216,45 @@ const WebPanel = () => {
   // For wait_for_user action - shows a prompt and waits for user to continue
   const [userPrompt, setUserPrompt] = useState<{ message: string; resolve: () => void } | null>(null);
 
+  // Load messages when active session changes (sidebar click).
+  // NEVER wipe messages while a task is actively running.
+  useEffect(() => {
+    if (activeTaskId) return; // task running — don't touch messages
+    if (!activeProjectId || !activeWebSessionId) {
+      setMessages(WELCOME_MESSAGES);
+      setCurrentSessionId(null);
+      return;
+    }
+    if (activeWebSessionId === currentSessionId) return;
+    const saved = getSessionMessages(activeProjectId, activeWebSessionId);
+    if (saved.length > 0) {
+      setMessages(saved as WebMessage[]);
+    } else {
+      setMessages(WELCOME_MESSAGES);
+    }
+    setCurrentSessionId(activeWebSessionId);
+  }, [activeWebSessionId, activeProjectId]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Initialize .codescout_web folder when web mode is opened
+  // Auto-save messages to session store while task is running (debounced)
   useEffect(() => {
-    initWebFolder().catch(() => {});
-  }, []);
+    if (!activeProjectId || !currentSessionId || !activeTaskId) return;
+    const timer = setTimeout(() => {
+      saveSessionMessages(activeProjectId, currentSessionId, messages as import('@/store/webSessionStore').WebSessionMessage[]);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [messages, activeProjectId, currentSessionId, activeTaskId]);
+
+  // Initialize .codescout_web folder when web mode is opened or project changes
+  const projectPath = useWorkbenchStore(s => s.projectPath);
+  useEffect(() => {
+    initWebFolder().catch((err) => {
+      console.warn('[WebPanel] Failed to initialize .codescout_web folder:', err);
+    });
+  }, [projectPath]);
 
   useEffect(() => {
     const checkStatus = async () => {
@@ -492,6 +533,13 @@ const WebPanel = () => {
     } finally {
       setActiveTaskId(null);
       abortControllerRef.current = null;
+      // Persist messages to session store
+      if (activeProjectId && sessionId) {
+        setMessages(prev => {
+          saveSessionMessages(activeProjectId, sessionId, prev as import('@/store/webSessionStore').WebSessionMessage[]);
+          return prev;
+        });
+      }
     }
   };
 
@@ -500,6 +548,10 @@ const WebPanel = () => {
   };
 
   const isRunning = !!activeTaskId;
+
+  const hasOrchestrator = !!getActiveModel('orchestrator')?.enabled;
+  const hasCoder = !!getActiveModel('coder')?.enabled;
+  const missingRoles = !hasOrchestrator || !hasCoder;
 
   return (
     <div className="h-full flex flex-col bg-card">
@@ -688,21 +740,73 @@ const WebPanel = () => {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Saved files bar */}
+      {savedWebFiles.length > 0 && (
+        <div className="shrink-0 border-t border-border bg-surface-panel/50 px-3 py-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+              <FolderOpen className="h-3 w-3" /> Saved:
+            </span>
+            {savedWebFiles.map(f => (
+              <button
+                key={f.absolutePath}
+                onClick={async () => {
+                  try {
+                    const { invoke } = await import('@tauri-apps/api/core');
+                    const content = await invoke<string>('read_file_text', { path: f.absolutePath });
+                    useWorkbenchStore.getState().createFile(f.filename, content);
+                    openFileInEditor(f.filename);
+                  } catch (err) {
+                    console.warn('[WebPanel] Failed to open file:', err);
+                  }
+                }}
+                className="flex items-center gap-1 px-2 py-1 text-[11px] bg-amber-500/10 text-amber-400 rounded-md hover:bg-amber-500/20 transition-colors"
+                title={f.absolutePath}
+              >
+                <FileText className="h-3 w-3" />
+                {f.filename}
+                <span className="text-[9px] text-muted-foreground">
+                  {f.size > 1024 ? `${(f.size / 1024).toFixed(1)}k` : `${f.size}b`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Input */}
-      <div className="shrink-0 border-t border-border bg-surface-panel p-3">
+      <div className="shrink-0 border-t border-border bg-surface-panel p-3 space-y-2">
+        {missingRoles && (
+          <div className="flex items-start gap-2 py-2.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-amber-400">
+                Select {!hasOrchestrator && !hasCoder ? 'an Orchestrator and a Coder' : !hasOrchestrator ? 'an Orchestrator' : 'a Coder'}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Code Scout needs both an Orchestrator and a Coder model to work. Configure them in{' '}
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="underline text-primary hover:text-primary/80"
+                >Settings</button>.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="flex gap-2">
           <textarea
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder={isRunning ? "Task running..." : "What should I do in the browser?"}
-            className="flex-1 min-h-[50px] max-h-28 bg-input text-sm rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary/80 border border-border"
-            disabled={isRunning}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !missingRoles) { e.preventDefault(); handleSend(); } }}
+            placeholder={missingRoles ? 'Configure Orchestrator & Coder models to get started…' : isRunning ? "Task running..." : "What should I do in the browser?"}
+            className="flex-1 min-h-[80px] max-h-40 bg-input text-sm rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary/80 border border-border"
+            disabled={isRunning || missingRoles}
           />
           <button
             onClick={isRunning ? handleStop : handleSend}
-            disabled={!isRunning && !input.trim()}
+            disabled={missingRoles || (!isRunning && !input.trim())}
             className={`self-end p-2 rounded-lg ${isRunning ? 'bg-destructive text-white' : 'bg-primary text-white disabled:opacity-50'}`}
           >
             {isRunning ? <Square className="h-5 w-5" /> : <Send className="h-5 w-5" />}

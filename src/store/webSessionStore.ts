@@ -4,6 +4,31 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export interface WebSessionMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  screenshot?: string;
+  taskCard?: {
+    id: string;
+    task: string;
+    status: 'running' | 'done' | 'error' | 'stopped';
+    steps: Array<{
+      id: string;
+      action: string;
+      description: string;
+      detail?: string;
+      output?: string;
+      status: 'pending' | 'running' | 'done' | 'error';
+      reason?: string;
+    }>;
+    result?: string;
+    screenshot?: string;
+    thinking?: string;
+  };
+}
+
 export interface WebSession {
   id: string;
   title: string;
@@ -11,6 +36,7 @@ export interface WebSession {
   url?: string;
   status: 'running' | 'done' | 'error' | 'stopped';
   stepsCount: number;
+  messages: WebSessionMessage[];
   createdAt: number;
   updatedAt: number;
 }
@@ -24,6 +50,8 @@ interface WebSessionState {
   // Actions
   createSession: (projectId: string, task: string) => string;
   updateSession: (projectId: string, sessionId: string, updates: Partial<WebSession>) => void;
+  saveMessages: (projectId: string, sessionId: string, messages: WebSessionMessage[]) => void;
+  getMessages: (projectId: string, sessionId: string) => WebSessionMessage[];
   deleteSession: (projectId: string, sessionId: string) => void;
   setActiveSession: (projectId: string, sessionId: string | null) => void;
   getSessionsForProject: (projectId: string) => WebSession[];
@@ -53,6 +81,7 @@ export const useWebSessionStore = create<WebSessionState>()(
           task,
           status: 'running',
           stepsCount: 0,
+          messages: [],
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -88,6 +117,30 @@ export const useWebSessionStore = create<WebSessionState>()(
             },
           };
         });
+      },
+
+      saveMessages: (projectId, sessionId, messages) => {
+        set(s => {
+          const sessions = s.sessionsByProject[projectId] || [];
+          const idx = sessions.findIndex(sess => sess.id === sessionId);
+          if (idx === -1) return s;
+
+          const newSessions = [...sessions];
+          newSessions[idx] = { ...newSessions[idx], messages, updatedAt: Date.now() };
+
+          return {
+            sessionsByProject: {
+              ...s.sessionsByProject,
+              [projectId]: newSessions,
+            },
+          };
+        });
+      },
+
+      getMessages: (projectId, sessionId) => {
+        const sessions = get().sessionsByProject[projectId] || [];
+        const session = sessions.find(s => s.id === sessionId);
+        return session?.messages || [];
       },
 
       deleteSession: (projectId, sessionId) => {
@@ -134,6 +187,25 @@ export const useWebSessionStore = create<WebSessionState>()(
         }));
       },
     }),
-    { name: 'code-scout-web-sessions' },
+    {
+      name: 'code-scout-web-sessions',
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        for (const projectId of Object.keys(state.sessionsByProject)) {
+          const sessions = state.sessionsByProject[projectId];
+          let changed = false;
+          const fixed = sessions.map(s => {
+            if (s.status === 'running') {
+              changed = true;
+              return { ...s, status: 'stopped' as const, updatedAt: Date.now() };
+            }
+            return s;
+          });
+          if (changed) {
+            state.sessionsByProject[projectId] = fixed;
+          }
+        }
+      },
+    },
   ),
 );

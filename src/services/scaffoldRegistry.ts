@@ -196,7 +196,9 @@ function applyVersions(content: string, versions: Map<string, string>): string {
 
 // ─── Archetype definitions ────────────────────────────────────────────────────
 
-const ARCHETYPES: ScaffoldArchetype[] = [
+export { type ScaffoldArchetype };
+
+export const ARCHETYPES: ScaffoldArchetype[] = [
   // ── React + Vite + TypeScript + Tailwind ─────────────────────────────────
   {
     id: 'react-vite-ts',
@@ -946,6 +948,17 @@ export async function buildScaffoldPrompt(
           ...f,
           content: f.content.replace('"strict": true', '"strict": false'),
         };
+      }
+      return f;
+    });
+  }
+
+  // Apply user file overrides
+  const overrides = customization.fileOverrides ?? {};
+  if (Object.keys(overrides).length > 0) {
+    files = files.map(f => {
+      if (overrides[f.path] !== undefined) {
+        return { ...f, content: overrides[f.path] };
       }
       return f;
     });

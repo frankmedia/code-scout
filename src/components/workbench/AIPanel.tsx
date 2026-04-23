@@ -624,6 +624,7 @@ const AIPanel = () => {
   const getModelForRole = useModelStore(s => s.getModelForRole);
   const getSelectedChatModel = useModelStore(s => s.getSelectedChatModel);
   const updateModel = useModelStore(s => s.updateModel);
+  const setSettingsOpen = useModelStore(s => s.setSettingsOpen);
   const { saveCurrentChat } = useChatHistoryStore();
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
@@ -2103,7 +2104,11 @@ const AIPanel = () => {
   };
 
   const hasComposableInput = Boolean(input.trim() || pendingImages.length > 0 || pendingTextFiles.length > 0);
-  const canSendIdle = hasComposableInput && !isAgentBusy;
+
+  const hasOrchestrator = !!getModelForRole('orchestrator')?.enabled;
+  const hasCoder = !!getModelForRole('coder')?.enabled;
+  const missingRoles = !hasOrchestrator || !hasCoder;
+  const canSendIdle = hasComposableInput && !isAgentBusy && !missingRoles;
 
   // Only show the ChatPlanCard on the *last* message that has showPlanCard, to
   // prevent every prior plan message from re-rendering the same current plan.
@@ -2272,6 +2277,25 @@ const AIPanel = () => {
       </div>
 
       <div className="pt-2 pb-3 border-t border-border space-y-2 shrink-0">
+
+        {missingRoles && (
+          <div className="flex items-start gap-2 py-2.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-amber-400">
+                Select {!hasOrchestrator && !hasCoder ? 'an Orchestrator and a Coder' : !hasOrchestrator ? 'an Orchestrator' : 'a Coder'}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Code Scout needs both an Orchestrator and a Coder model to work. Configure them in{' '}
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="underline text-primary hover:text-primary/80"
+                >Settings</button>.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* ── Toolbar row: mode toggle · model dropdowns · stop · context bar ── */}
         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">

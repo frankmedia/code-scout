@@ -71,6 +71,8 @@ export type PlanAction =
   | 'crawl'
   | 'sitemap'
   | 'detect_form'
+  | 'save_text'
+  | 'save_file'
   | 'save_json'
   | 'save_csv'
   | 'save_markdown'

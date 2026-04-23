@@ -363,7 +363,20 @@ async function handleCommand(cmd) {
       }
       case 'extract': {
         if (!page) return { success: false, error: 'No browser running' };
-        let content = cmd.selector ? await (await page.$(cmd.selector))?.textContent() : await page.evaluate(() => document.body.innerText.slice(0, 50000));
+        let content: string | null | undefined;
+        if (cmd.selector) {
+          content = await (await page.$(cmd.selector))?.textContent();
+        } else {
+          content = await page.evaluate(() => {
+            const BOILERPLATE = 'script,style,nav,footer,header,aside,[role="navigation"],[role="banner"],[role="contentinfo"],.cookie-banner,.cookie-notice,#cookie-consent,.breadcrumb,.breadcrumbs,.site-header,.site-footer,.nav-bar,.navbar';
+            const main = document.querySelector('main,article,[role="main"],.main-content,.page-content,.entry-content,.post-content,#content,#main');
+            const root = main || document.body;
+            const clone = root.cloneNode(true) as HTMLElement;
+            clone.querySelectorAll(BOILERPLATE).forEach(el => el.remove());
+            const text = clone.innerText || '';
+            return text.replace(/\n{3,}/g, '\n\n').trim().slice(0, 120000);
+          });
+        }
         return { success: true, title: await page.title(), url: page.url(), content };
       }
       case 'screenshot': {
@@ -530,10 +543,12 @@ async function handleCommand(cmd) {
           try {
             await page.goto(url, {waitUntil:'domcontentloaded',timeout:15000});
             const data = await page.evaluate(() => {
-              const main = document.querySelector('main,article,[role=main],.content') || document.body;
-              const clone = main.cloneNode(true); clone.querySelectorAll('script,style,nav,footer,header').forEach(e=>e.remove());
-              const links = []; document.querySelectorAll('a[href]').forEach(a => { try { const p = new URL(a.href); if (p.origin === location.origin) links.push(p.origin+p.pathname); } catch {} });
-              return { title: document.title, url: location.href, content: clone.innerText?.slice(0,5000)||'', links };
+              const BOILERPLATE = 'script,style,nav,footer,header,aside,[role="navigation"],[role="banner"],[role="contentinfo"],.cookie-banner,.cookie-notice,#cookie-consent,.breadcrumb,.breadcrumbs,.site-header,.site-footer';
+              const main = document.querySelector('main,article,[role=main],.main-content,.page-content,.entry-content,.post-content,#content,#main') || document.body;
+              const clone = main.cloneNode(true) as HTMLElement; clone.querySelectorAll(BOILERPLATE).forEach(e=>e.remove());
+              const links: string[] = []; document.querySelectorAll('a[href]').forEach(a => { try { const p = new URL((a as HTMLAnchorElement).href); if (p.origin === location.origin) links.push(p.origin+p.pathname); } catch {} });
+              const text = (clone.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
+              return { title: document.title, url: location.href, content: text.slice(0,30000), links };
             });
             results.push({url:data.url,title:data.title,content:data.content,depth});
             if (depth < maxDepth) data.links.forEach(l => { if (!visited.has(l)) queue.push({url:l,depth:depth+1}); });

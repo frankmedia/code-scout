@@ -172,6 +172,22 @@ fn read_file_text(path: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read file {}: {}", path, e))
 }
 
+/// Write binary content (base64-encoded) to any file path, creating parent dirs.
+#[tauri::command]
+fn write_binary_file(path: String, data_base64: String) -> Result<(), String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&data_base64)
+        .map_err(|e| format!("Invalid base64: {}", e))?;
+    let p = Path::new(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create dirs: {}", e))?;
+    }
+    std::fs::write(p, bytes)
+        .map_err(|e| format!("Failed to write binary file {}: {}", path, e))
+}
+
 /// Create a directory (and all parents).
 #[tauri::command]
 fn create_dir(path: String) -> Result<(), String> {
@@ -466,6 +482,7 @@ pub fn run() {
             read_project_dir,
             read_file_text,
             write_file,
+            write_binary_file,
             create_dir,
             http_request,
             get_user_shell,

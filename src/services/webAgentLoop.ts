@@ -9,8 +9,10 @@
  */
 
 import { callModel, modelToRequest, type ModelRequestMessage } from './modelApi';
-import { useModelStore } from '../store/modelStore';
+import { useModelStore, type ModelConfig } from '../store/modelStore';
 import { executeBrowserAction, clearAccumulatedData, getAccumulatedData, recordWebHistory, getRecentWebHistorySummary, initWebFolder } from './browserExecutor';
+import { roughTokensFromRequestMessages } from '../utils/tokenEstimate';
+import { contextLimitForModel } from '../utils/tokenEstimate';
 import * as browserService from './browserService';
 
 // Track actions performed during the session for history
@@ -47,7 +49,9 @@ export interface WebAgentAction {
   value?: string;
   url?: string;
   path?: string;
-  reason: string;  // AI explains why it's taking this action
+  content?: string;
+  command?: string;
+  reason: string;
 }
 
 export interface WebAgentCallbacks {
@@ -61,7 +65,112 @@ export interface WebAgentCallbacks {
   trackTokens?: (input: number, output: number, role: 'orchestrator' | 'coder') => void;
 }
 
-const MAX_STEPS = 25;
+const MAX_STEPS = 200;
+const GENERATION_RESERVE = 0.20;
+const KEEP_RECENT_PAIRS = 6;
+const MAX_CONTEXT_RETRIES = 3;
+
+/**
+ * Detect a context-window-exceeded error from the model API.
+ */
+function isContextLimitError(err: Error): boolean {
+  const m = err.message;
+  if (m.includes('exceed_context_size_error')) return true;
+  return (
+    (m.includes('400') || m.includes('status 4')) &&
+    (/context|too long|token limit|max.*length/i.test(m))
+  );
+}
+
+/**
+ * Summarize a batch of old user→assistant turn pairs into a compact recap.
+ * Keeps the conversation coherent without wasting tokens on full content.
+ */
+function summarizeOldTurns(msgs: ModelRequestMessage[]): string {
+  const lines: string[] = [];
+  for (const m of msgs) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      const stepMatch = m.content.match(/Step (\d+)\/\d+/);
+      const urlMatch = m.content.match(/URL: (.+)/);
+      const actionMatch = m.content.match(/LAST ACTION RESULT:\n(.{0,120})/);
+      if (stepMatch) {
+        let line = `Step ${stepMatch[1]}`;
+        if (urlMatch) line += ` @ ${urlMatch[1]}`;
+        if (actionMatch) line += ` — ${actionMatch[1].trim()}`;
+        lines.push(line);
+      }
+    }
+  }
+  if (lines.length === 0) return '(earlier steps omitted for context)';
+  return `Previous steps (summarized):\n${lines.join('\n')}`;
+}
+
+/**
+ * Prune the web agent message history to fit within a token budget.
+ * Keeps: system prompt + summary of old turns + last N user/assistant pairs.
+ */
+function pruneWebMessages(
+  messages: ModelRequestMessage[],
+  targetTokens: number,
+  keepPairs = KEEP_RECENT_PAIRS,
+): ModelRequestMessage[] {
+  const current = roughTokensFromRequestMessages(messages);
+  if (current <= targetTokens) return messages;
+
+  const system = messages.filter(m => m.role === 'system');
+  const nonSystem = messages.filter(m => m.role !== 'system');
+
+  // Keep the last N*2 messages (N pairs of user+assistant)
+  const keepCount = Math.min(keepPairs * 2, nonSystem.length);
+  const recent = nonSystem.slice(-keepCount);
+  const old = nonSystem.slice(0, nonSystem.length - keepCount);
+
+  if (old.length === 0) {
+    return messages.map(m => {
+      if (m.role !== 'system' && typeof m.content === 'string' && m.content.length > 6000) {
+        return { ...m, content: m.content.slice(0, 6000) + '\n…(truncated)' };
+      }
+      return m;
+    });
+  }
+
+  const summary: ModelRequestMessage = {
+    role: 'user',
+    content: summarizeOldTurns(old),
+  };
+  const ack: ModelRequestMessage = {
+    role: 'assistant',
+    content: '{"action":"_context_note","reason":"Understood previous steps, continuing."}',
+  };
+
+  let result = [...system, summary, ack, ...recent];
+  let tokens = roughTokensFromRequestMessages(result);
+
+  // If still over, shrink keepPairs progressively
+  while (tokens > targetTokens && result.length > system.length + 4) {
+    result.splice(system.length + 2, 2);
+    tokens = roughTokensFromRequestMessages(result);
+  }
+
+  if (tokens > targetTokens) {
+    result = result.map(m => {
+      if (m.role !== 'system' && typeof m.content === 'string' && m.content.length > 3000) {
+        return { ...m, content: m.content.slice(0, 3000) + '\n…(truncated)' };
+      }
+      return m;
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Compute the target token budget for the web agent (80% of context window).
+ */
+function webContextBudget(model: ModelConfig): number {
+  const limit = contextLimitForModel(model);
+  return Math.floor(limit * (1 - GENERATION_RESERVE));
+}
 
 /**
  * Use Coder model to analyze data and generate polished final answers.
@@ -104,9 +213,9 @@ async function generateCoderAnalysis(
 
 **ORCHESTRATOR'S SUMMARY:** ${orchestratorSummary}
 
-${extractedData ? `**EXTRACTED DATA:**\n${extractedData.slice(0, 8000)}` : ''}
+${extractedData ? `**EXTRACTED DATA:**\n${extractedData.slice(0, 15000)}` : ''}
 
-${pageContent ? `**PAGE CONTENT:**\n${pageContent.slice(0, 4000)}` : ''}
+${pageContent ? `**PAGE CONTENT:**\n${pageContent.slice(0, 15000)}` : ''}
 
 Based on the above, provide a clear, well-formatted answer to the user's task. Focus on what they actually asked for.`;
 
@@ -256,9 +365,10 @@ ${historySection}
 - **get_links**: Extract all links on the page.
 - **crawl**: Crawl multiple pages. Use "value" for max pages.
 - **sitemap**: Generate sitemap of site.
+- **save_text**: Save arbitrary text content to a file. Use "path" for filename (e.g., "about-us.md") and "content" for the full text to write. Perfect for saving cleaned/formatted page content as individual files.
 - **save_json**: Save all extracted/crawled data as JSON file. Use "path" for filename (e.g., "products.json").
 - **save_csv**: Save data as CSV (great for lists/tables). Use "path" for filename. Data must be array of objects.
-- **save_markdown**: Save a formatted report. Use "path" for filename.
+- **save_markdown**: Save a formatted report of accumulated data. Use "path" for filename.
 - **save_screenshot**: Save current browser view as PNG. Use "path" for filename.
 - **done**: Task complete! Use "value" to provide your final answer/summary to the user.
 
@@ -269,7 +379,7 @@ ${historySection}
 - browser_extract: Page content you extract
 - detect_form: Form field definitions
 - crawl/sitemap/get_links: URLs and page data
-Use save_json or save_csv to write accumulated data to disk. For form submissions, just fill the fields and then save_json to capture what you entered.
+Use save_text to write individual files (e.g., cleaned page content as .md), save_json/save_csv for structured data. For form submissions, just fill the fields and then save_json to capture what you entered.
 
 **FORM FILLING RULES (CRITICAL!):**
 1. NEVER guess form selectors! You MUST use detect_form first.
@@ -306,6 +416,14 @@ Step 1: { "action": "browser_goto", "url": "https://example.com/products", "reas
 Step 2: { "action": "crawl", "value": "20", "reason": "Crawl up to 20 product pages" }
 Step 3: { "action": "save_csv", "path": "products.csv", "reason": "Save crawled data to CSV" }
 Step 4: { "action": "done", "value": "Crawled 20 product pages and saved to products.csv", "reason": "Task complete" }
+
+**Example: Scrape pages and save individual Markdown files:**
+Step 1: { "action": "browser_goto", "url": "https://example.com", "reason": "Navigate to homepage" }
+Step 2: { "action": "get_links", "reason": "Discover internal pages to scrape" }
+Step 3: { "action": "browser_goto", "url": "https://example.com/about", "reason": "Navigate to about page" }
+Step 4: { "action": "browser_extract", "reason": "Extract main content from about page" }
+Step 5: { "action": "save_text", "path": "about.md", "content": "# About Us\n\nFull cleaned markdown content here...", "reason": "Save about page as markdown" }
+(Repeat steps 3-5 for each page)
 
 **GOOGLE SEARCH (IMPORTANT!):**
 When asked to search Google:
@@ -368,10 +486,10 @@ function buildObservationPrompt(task: string, state: WebAgentState): string {
   }
   
   if (state.pageContent) {
-    const truncated = state.pageContent.slice(0, 3000);
-    prompt += `\n**PAGE CONTENT (truncated):**\n${truncated}\n`;
-    if (state.pageContent.length > 3000) {
-      prompt += `... (${state.pageContent.length - 3000} more characters)\n`;
+    const truncated = state.pageContent.slice(0, 12000);
+    prompt += `\n**PAGE CONTENT:**\n${truncated}\n`;
+    if (state.pageContent.length > 12000) {
+      prompt += `... (${state.pageContent.length - 12000} more characters — use browser_extract with a CSS selector to target specific sections)\n`;
     }
   }
   
@@ -381,19 +499,31 @@ function buildObservationPrompt(task: string, state: WebAgentState): string {
 
 function parseAgentResponse(text: string): WebAgentAction | null {
   try {
-    // Try to extract JSON from the response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
-    
-    const parsed = JSON.parse(jsonMatch[0]);
+
+    let raw = jsonMatch[0];
+
+    // LLMs often put literal newlines inside JSON string values which is invalid.
+    // Fix: replace unescaped newlines/tabs inside strings with their escape sequences.
+    raw = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) =>
+      match
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t'),
+    );
+
+    const parsed = JSON.parse(raw);
     if (!parsed.action) return null;
-    
+
     return {
       action: parsed.action,
       selector: parsed.selector,
       value: parsed.value,
       url: parsed.url,
       path: parsed.path,
+      content: parsed.content,
+      command: parsed.command,
       reason: parsed.reason || parsed.thinking || '',
     };
   } catch {
@@ -448,9 +578,12 @@ export async function runWebAgentLoop(
   
   // Build system prompt with history context
   const systemPrompt = await buildAgentSystemPrompt();
-  const messages: ModelRequestMessage[] = [
+  let messages: ModelRequestMessage[] = [
     { role: 'system', content: systemPrompt },
   ];
+
+  const tokenBudget = webContextBudget(modelConfig);
+  let contextErrors = 0;
   
   while (!state.done && state.stepCount < state.maxSteps) {
     if (abortSignal?.aborted) {
@@ -474,39 +607,101 @@ export async function runWebAgentLoop(
     // Build observation prompt
     const observationPrompt = buildObservationPrompt(task, state);
     messages.push({ role: 'user', content: observationPrompt });
+
+    // ── Proactive context pruning ──
+    const estimatedTokens = roughTokensFromRequestMessages(messages);
+    if (estimatedTokens > tokenBudget) {
+      callbacks.onThinking(`Context ${Math.round(estimatedTokens / 1000)}k tok > ${Math.round(tokenBudget / 1000)}k budget — compressing history…`);
+      messages = pruneWebMessages(messages, tokenBudget);
+    }
     
-    // Get AI's next action
+    // Get AI's next action (retry on transient + context errors)
     let responseText = '';
-    try {
-      const request = modelToRequest(modelConfig, messages, { maxOutputTokens: 1000 });
-      
-      await new Promise<void>((resolve, reject) => {
-        callModel(
-          request,
-          (chunk) => { responseText += chunk; },
-          () => resolve(),
-          reject,
-          (usage) => {
-            if (callbacks.trackTokens) {
-              callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
+    let contextRetried = false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      responseText = '';
+      const aiRequest = modelToRequest(modelConfig, messages, { maxOutputTokens: 1000, signal: abortSignal });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          callModel(
+            aiRequest,
+            (chunk) => { responseText += chunk; },
+            () => resolve(),
+            reject,
+            (usage) => {
+              if (callbacks.trackTokens) {
+                callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
+              }
             }
+          );
+        });
+        break;
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') throw err;
+        // Context-limit recovery: prune aggressively and retry
+        if (err instanceof Error && isContextLimitError(err) && !contextRetried) {
+          contextErrors++;
+          if (contextErrors > MAX_CONTEXT_RETRIES) {
+            state.error = 'Context window too small for this task even after pruning. Try a model with a larger context window.';
+            callbacks.onError(state.error);
+            return;
           }
-        );
-      });
-    } catch (err) {
-      state.error = `AI error: ${err instanceof Error ? err.message : String(err)}`;
-      callbacks.onError(state.error);
-      return;
+          contextRetried = true;
+          callbacks.onThinking(`Context limit hit — pruning aggressively (attempt ${contextErrors}/${MAX_CONTEXT_RETRIES})…`);
+          messages = pruneWebMessages(messages, Math.floor(tokenBudget * 0.6), Math.max(2, KEEP_RECENT_PAIRS - 2));
+          attempt--; // retry this attempt
+          continue;
+        }
+        if (attempt === 1) {
+          state.error = `AI error: ${err instanceof Error ? err.message : String(err)}`;
+          callbacks.onError(state.error);
+          return;
+        }
+        callbacks.onThinking('Model call failed — retrying…');
+        await new Promise(r => setTimeout(r, 1500));
+      }
     }
     
     messages.push({ role: 'assistant', content: responseText });
     
-    // Parse the action
-    const action = parseAgentResponse(responseText);
+    // Parse the action — retry up to 2 more times if the LLM sends malformed JSON
+    let action = parseAgentResponse(responseText);
     if (!action) {
-      state.error = 'Failed to parse AI response as action';
-      callbacks.onError(state.error);
-      return;
+      let retryAction: WebAgentAction | null = null;
+      for (let retry = 0; retry < 2 && !retryAction; retry++) {
+        callbacks.onThinking(`Response wasn't valid JSON — retrying (${retry + 1}/2)…`);
+        messages.push({
+          role: 'user',
+          content: 'Your last response was not valid JSON. Reply with ONLY a JSON object like: {"action":"...","reason":"..."}\nNo extra text, no markdown fences.',
+        });
+        let retryText = '';
+        try {
+          await new Promise<void>((resolve, reject) => {
+            callModel(
+              modelToRequest(modelConfig, messages, { maxOutputTokens: 500, signal: abortSignal }),
+              (chunk) => { retryText += chunk; },
+              () => resolve(),
+              reject,
+              (usage) => {
+                if (callbacks.trackTokens) {
+                  callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
+                }
+              },
+            );
+          });
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') throw err;
+          break;
+        }
+        messages.push({ role: 'assistant', content: retryText });
+        retryAction = parseAgentResponse(retryText);
+      }
+      if (!retryAction) {
+        state.error = 'Failed to parse AI response as action after retries';
+        callbacks.onError(state.error);
+        return;
+      }
+      action = retryAction;
     }
     
     callbacks.onAction(action);
@@ -586,11 +781,15 @@ export async function runWebAgentLoop(
       }
     }
     
+    // Check abort before executing
+    if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
     // Execute the action
     callbacks.onThinking(`Executing: ${action.action}...`);
     
     try {
       const result = await executeAgentAction(action, state);
+      if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
       state.lastActionResult = result.output;
       
       // Notify about action completion with result
@@ -599,7 +798,7 @@ export async function runWebAgentLoop(
       }
       
       // Track saved files for history
-      if (['save_json', 'save_csv', 'save_markdown', 'save_screenshot'].includes(action.action) && result.success) {
+      if (['save_text', 'save_file', 'save_json', 'save_csv', 'save_markdown', 'save_screenshot'].includes(action.action) && result.success) {
         const fileMatch = result.output.match(/\.codescout_web\/(?:data|screenshots)\/([^\s]+)/);
         if (fileMatch) {
           sessionDataFiles.push(fileMatch[0]);
@@ -663,6 +862,19 @@ export async function runWebAgentLoop(
       callbacks.onStateChange({ ...state });
       
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        state.error = 'Aborted by user';
+        recordWebHistory({
+          task,
+          url: state.currentUrl || undefined,
+          actions: sessionActions,
+          result: 'stopped',
+          dataFiles: sessionDataFiles.length > 0 ? sessionDataFiles : undefined,
+          timestamp: new Date().toISOString(),
+        });
+        callbacks.onError(state.error);
+        throw err;
+      }
       state.lastActionResult = `Error: ${err instanceof Error ? err.message : String(err)}`;
       callbacks.onStateChange({ ...state });
     }
@@ -687,7 +899,6 @@ async function executeAgentAction(
   action: WebAgentAction,
   state: WebAgentState
 ): Promise<{ success: boolean; output: string }> {
-  // Map agent action to browser executor
   const step = {
     action: action.action,
     description: action.reason,
@@ -695,6 +906,8 @@ async function executeAgentAction(
     value: action.value,
     url: action.url,
     path: action.path,
+    content: action.content,
+    command: action.command,
   };
   
   return executeBrowserAction(step as any, console.log);

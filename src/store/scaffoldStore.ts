@@ -22,6 +22,8 @@ export interface ScaffoldCustomization {
   strictTypeScript: boolean;
   /** Custom CSS content to append to globals.css */
   customCss: string;
+  /** Per-file content overrides keyed by file path */
+  fileOverrides: Record<string, string>;
 }
 
 export interface ScaffoldStoreState {
@@ -40,6 +42,12 @@ export interface ScaffoldStoreState {
   /** Remove an extra package from an archetype */
   removeExtraPackage: (archetypeId: string, packageName: string) => void;
 
+  /** Set a file override for a specific archetype + path */
+  setFileOverride: (archetypeId: string, filePath: string, content: string) => void;
+
+  /** Remove a file override (revert to default) */
+  removeFileOverride: (archetypeId: string, filePath: string) => void;
+
   /** Reset an archetype to defaults */
   resetArchetype: (archetypeId: string) => void;
 
@@ -52,6 +60,7 @@ const DEFAULT_CUSTOMIZATION: ScaffoldCustomization = {
   includeTailwind: true,
   strictTypeScript: true,
   customCss: '',
+  fileOverrides: {},
 };
 
 export const useScaffoldStore = create<ScaffoldStoreState>()(
@@ -65,6 +74,7 @@ export const useScaffoldStore = create<ScaffoldStoreState>()(
           ...DEFAULT_CUSTOMIZATION,
           ...custom,
           extraPackages: custom.extraPackages ?? DEFAULT_CUSTOMIZATION.extraPackages,
+          fileOverrides: custom.fileOverrides ?? DEFAULT_CUSTOMIZATION.fileOverrides,
         };
       },
 
@@ -105,6 +115,40 @@ export const useScaffoldStore = create<ScaffoldStoreState>()(
               [archetypeId]: {
                 ...state.customizations[archetypeId],
                 extraPackages: current.filter(p => p.name !== packageName),
+              },
+            },
+          };
+        });
+      },
+
+      setFileOverride: (archetypeId: string, filePath: string, content: string) => {
+        set(state => {
+          const current = state.customizations[archetypeId] ?? {};
+          return {
+            customizations: {
+              ...state.customizations,
+              [archetypeId]: {
+                ...current,
+                fileOverrides: {
+                  ...(current.fileOverrides ?? {}),
+                  [filePath]: content,
+                },
+              },
+            },
+          };
+        });
+      },
+
+      removeFileOverride: (archetypeId: string, filePath: string) => {
+        set(state => {
+          const current = state.customizations[archetypeId] ?? {};
+          const { [filePath]: _, ...rest } = current.fileOverrides ?? {};
+          return {
+            customizations: {
+              ...state.customizations,
+              [archetypeId]: {
+                ...current,
+                fileOverrides: rest,
               },
             },
           };

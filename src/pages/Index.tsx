@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { X, Bot, FileText, ListOrdered, ChevronUp, ChevronDown, Terminal, FlaskConical, Globe, Undo2, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import TopBar from '@/components/workbench/TopBar';
 import FileTree from '@/components/workbench/FileTree';
 import TokenPowerGrid from '@/components/workbench/TokenPowerGrid';
@@ -43,6 +43,9 @@ const Index = () => {
     currentPlan,
     planTabOpen,
     closePlanTab,
+    fileHistory,
+    rollbackFile,
+    addLog,
   } = useWorkbenchStore();
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const webModeEnabled = useModeStore(s => s.webModeEnabled);
@@ -127,7 +130,7 @@ const Index = () => {
         <ResizablePanel defaultSize={75} minSize={30} className="flex flex-col overflow-hidden min-w-0">
           {/* Tab bar */}
           <div className="flex items-center border-b border-border shrink-0 bg-surface-panel overflow-x-auto">
-            {/* Chat tab — permanent */}
+            {/* Code Agent tab — permanent */}
             <button
               onClick={() => setActiveCenterTab('chat')}
               className={`flex items-center gap-1.5 px-3 py-2 text-xs border-r border-border shrink-0 transition-colors ${
@@ -137,8 +140,23 @@ const Index = () => {
               }`}
             >
               <Bot className="h-3 w-3" />
-              Chat
+              Code Agent
             </button>
+
+            {/* Web tab — visible when web mode is enabled */}
+            {webModeEnabled && (
+              <button
+                onClick={() => setActiveCenterTab(CENTER_TAB_WEB)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs border-r border-border shrink-0 transition-colors ${
+                  activeCenterTab === CENTER_TAB_WEB
+                    ? 'bg-card text-foreground border-b border-b-card'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-surface-hover'
+                }`}
+              >
+                <Globe className="h-3 w-3 text-amber-500" />
+                Web
+              </button>
+            )}
 
             {currentPlan && planTabOpen && (
               <div
@@ -168,6 +186,8 @@ const Index = () => {
             {openFiles.filter(f => !f.startsWith(':')).map(filePath => {
               const name = filePath.split('/').pop() || filePath;
               const isActive = activeCenterTab === filePath;
+              const snapshot = fileHistory.find(s => s.path === filePath);
+              const isChanged = !!snapshot;
               return (
                 <div
                   key={filePath}
@@ -180,6 +200,21 @@ const Index = () => {
                 >
                   <FileText className={`h-3 w-3 shrink-0 ${fileIcon(name)}`} />
                   <span className="truncate max-w-[100px]">{name}</span>
+                  {isChanged && snapshot?.action === 'created' && (
+                    <span className="text-[9px] font-bold text-success" title="New file">N</span>
+                  )}
+                  {isChanged && snapshot?.action === 'edited' && (
+                    <span className="text-[9px] font-bold text-primary" title="Modified">M</span>
+                  )}
+                  {isChanged && (
+                    <button
+                      onClick={e => { e.stopPropagation(); rollbackFile(filePath); addLog(`Rolled back: ${filePath}`, 'warning'); }}
+                      title="Rollback changes"
+                      className="opacity-0 group-hover:opacity-100 hover:bg-warning/20 rounded p-0.5 transition-opacity text-muted-foreground hover:text-warning"
+                    >
+                      <Undo2 className="h-3 w-3" />
+                    </button>
+                  )}
                   <button
                     onClick={e => { e.stopPropagation(); closeFile(filePath); }}
                     className="opacity-0 group-hover:opacity-100 rounded hover:text-destructive transition-all ml-0.5"
@@ -198,39 +233,34 @@ const Index = () => {
             <div className={`absolute inset-0 ${activeCenterTab === 'chat' ? '' : 'invisible pointer-events-none'}`}>
               <AIPanel />
             </div>
-            {activeCenterTab === CENTER_TAB_PLAN && (
-              <div className="absolute inset-0">
-                <PlanTabPanel />
-              </div>
-            )}
-            {activeCenterTab === CENTER_TAB_WEB && webModeEnabled && (
-              <div className="absolute inset-0">
+            {/* All panels stay mounted so local state survives tab switches */}
+            <div className={`absolute inset-0 ${activeCenterTab === CENTER_TAB_PLAN ? '' : 'invisible pointer-events-none'}`}>
+              <PlanTabPanel />
+            </div>
+            {webModeEnabled && (
+              <div className={`absolute inset-0 ${activeCenterTab === CENTER_TAB_WEB ? '' : 'invisible pointer-events-none'}`}>
                 <WebPanel />
               </div>
             )}
-            {activeCenterTab === CENTER_TAB_BENCHMARK && (
-              <div className="absolute inset-0 z-10 flex flex-col bg-card">
-                <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-panel shrink-0">
-                  <FlaskConical className="h-3.5 w-3.5 text-primary" />
-                  <span className="text-xs font-medium text-foreground">Benchmark</span>
-                  <button
-                    onClick={() => setActiveCenterTab('chat')}
-                    className="ml-auto p-1 rounded hover:bg-surface-hover text-muted-foreground hover:text-foreground transition-colors"
-                    title="Close benchmark"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <BenchmarkPanel />
-                </div>
+            <div className={`absolute inset-0 z-10 flex flex-col bg-card ${activeCenterTab === CENTER_TAB_BENCHMARK ? '' : 'invisible pointer-events-none'}`}>
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-panel shrink-0">
+                <FlaskConical className="h-3.5 w-3.5 text-primary" />
+                <span className="text-xs font-medium text-foreground">Benchmark</span>
+                <button
+                  onClick={() => setActiveCenterTab('chat')}
+                  className="ml-auto p-1 rounded hover:bg-surface-hover text-muted-foreground hover:text-foreground transition-colors"
+                  title="Close benchmark"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               </div>
-            )}
-            {activeCenterTab !== 'chat' && activeCenterTab !== CENTER_TAB_PLAN && activeCenterTab !== CENTER_TAB_WEB && activeCenterTab !== CENTER_TAB_BENCHMARK && (
-              <div className="absolute inset-0">
-                <EditorPanel />
+              <div className="flex-1 overflow-hidden">
+                <BenchmarkPanel />
               </div>
-            )}
+            </div>
+            <div className={`absolute inset-0 ${activeCenterTab !== 'chat' && activeCenterTab !== CENTER_TAB_PLAN && activeCenterTab !== CENTER_TAB_WEB && activeCenterTab !== CENTER_TAB_BENCHMARK ? '' : 'invisible pointer-events-none'}`}>
+              <EditorPanel />
+            </div>
           </div>
 
           {/* Terminal — collapsible */}

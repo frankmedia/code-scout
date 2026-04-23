@@ -25,76 +25,97 @@ import {
   acceptCookies,
   BrowserResult,
 } from './browserService';
-import { writeTextFile, writeFile, mkdir, exists } from '@tauri-apps/plugin-fs';
-import { join } from '@tauri-apps/api/path';
+import { writeFileNative, isTauri } from '@/lib/tauri';
 
 const WEB_FOLDER = '.codescout_web';
-const WEB_DATA_FOLDER = 'data';
-const WEB_SCREENSHOTS_FOLDER = 'screenshots';
-const WEB_HISTORY_FILE = 'history.json';
 
-// Ensure the .codescout_web folder structure exists
-async function ensureWebFolder(projectPath: string): Promise<string> {
-  const webFolder = await join(projectPath, WEB_FOLDER);
-  const dataFolder = await join(webFolder, WEB_DATA_FOLDER);
-  const screenshotsFolder = await join(webFolder, WEB_SCREENSHOTS_FOLDER);
-  const readmePath = await join(webFolder, 'README.md');
-  
+let _cachedAppDataDir: string | null = null;
+
+async function resolveAppDataDir(): Promise<string> {
+  if (_cachedAppDataDir) return _cachedAppDataDir;
   try {
-    const folderExisted = await exists(webFolder);
-    
-    if (!folderExisted) {
-      await mkdir(webFolder, { recursive: true });
-    }
-    if (!await exists(dataFolder)) {
-      await mkdir(dataFolder, { recursive: true });
-    }
-    if (!await exists(screenshotsFolder)) {
-      await mkdir(screenshotsFolder, { recursive: true });
-    }
-    
-    // Create README if folder is new
-    if (!folderExisted) {
-      const readme = `# Code Scout Web Automation
-
-This folder contains data from Code Scout's web automation tasks.
-
-## Folders
-
-- **data/** - Extracted data (JSON, CSV, Markdown reports)
-- **screenshots/** - Browser screenshots
-
-## Files
-
-- **history.json** - Log of all web tasks run in this project
-
-## Notes
-
-- Files are automatically saved here when you use save_json, save_csv, etc.
-- History tracks what tasks you've run for context in future sessions
-- You can safely delete files here; they won't affect the app
-`;
-      await writeTextFile(readmePath, readme);
-    }
-  } catch (err) {
-    console.warn('[browserExecutor] Could not create .codescout_web folder:', err);
+    const { appDataDir } = await import('@tauri-apps/api/path');
+    _cachedAppDataDir = await appDataDir();
+    return _cachedAppDataDir;
+  } catch {
+    return '/tmp/codescout-fallback';
   }
-  
-  return webFolder;
 }
 
-// Helper to get full path in .codescout_web directory
-async function getWebFilePath(filename: string, subfolder?: 'data' | 'screenshots'): Promise<string> {
-  const projectPath = useWorkbenchStore.getState().projectPath;
-  if (projectPath) {
-    const webFolder = await ensureWebFolder(projectPath);
-    if (subfolder) {
-      return await join(webFolder, subfolder, filename);
-    }
-    return await join(webFolder, filename);
-  }
-  // Fallback: just use the filename
-  return filename;
+function getProjectRoot(): string {
+  const pp = useWorkbenchStore.getState().projectPath;
+  if (pp) return pp;
+  if (_cachedAppDataDir) return _cachedAppDataDir;
+  return '/tmp/codescout-fallback';
+}
+
+function sanitizeFilename(raw: string): string {
+  return raw.replace(/^~[/\\]?/, '').replace(/^\.\//, '').split(/[/\\]/).pop() || raw;
+}
+
+function getWebFilePath(filename: string, subfolder?: 'data' | 'screenshots'): string {
+  const safe = sanitizeFilename(filename);
+  const root = getProjectRoot();
+  const sep = root.includes('\\') ? '\\' : '/';
+  const parts = [root, WEB_FOLDER];
+  if (subfolder) parts.push(subfolder);
+  parts.push(safe);
+  return parts.join(sep);
+}
+
+export interface WebSavedFile {
+  filename: string;
+  absolutePath: string;
+  size: number;
+  savedAt: number;
+}
+
+let _savedWebFiles: WebSavedFile[] = [];
+const _savedWebFilesListeners = new Set<() => void>();
+
+export function getSavedWebFiles(): WebSavedFile[] { return _savedWebFiles; }
+export function subscribeSavedWebFiles(cb: () => void) {
+  _savedWebFilesListeners.add(cb);
+  return () => { _savedWebFilesListeners.delete(cb); };
+}
+
+function trackSavedFile(absolutePath: string, size: number) {
+  const filename = absolutePath.split('/').pop() || absolutePath;
+  _savedWebFiles = [
+    ..._savedWebFiles.filter(f => f.absolutePath !== absolutePath),
+    { filename, absolutePath, size, savedAt: Date.now() },
+  ];
+  _savedWebFilesListeners.forEach(cb => cb());
+}
+
+export function clearSavedWebFiles() {
+  _savedWebFiles = [];
+  _savedWebFilesListeners.forEach(cb => cb());
+}
+
+async function writeWebFile(absolutePath: string, content: string): Promise<void> {
+  console.log('[browserExecutor] writeWebFile:', absolutePath, `(${content.length} chars)`);
+  await writeFileNative(absolutePath, content);
+  trackSavedFile(absolutePath, content.length);
+
+  // Add to in-memory file tree so it shows in the UI immediately
+  const filename = absolutePath.split('/').pop() || absolutePath;
+  const webPrefix = WEB_FOLDER + '/';
+  const idx = absolutePath.indexOf(webPrefix);
+  const relativePath = idx !== -1 ? absolutePath.slice(idx) : webPrefix + 'data/' + filename;
+  useWorkbenchStore.getState().createFile(relativePath, content);
+
+  console.log('[browserExecutor] writeWebFile SUCCESS:', absolutePath);
+}
+
+async function readWebFile(path: string): Promise<string> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<string>('read_file_text', { path });
+}
+
+async function writeBinaryWebFile(path: string, dataBase64: string): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('write_binary_file', { path, dataBase64 });
 }
 
 // Record a web session to history
@@ -106,30 +127,25 @@ async function recordWebHistory(entry: {
   dataFiles?: string[];
   timestamp: string;
 }): Promise<void> {
-  const projectPath = useWorkbenchStore.getState().projectPath;
-  if (!projectPath) return;
-  
   try {
-    const webFolder = await ensureWebFolder(projectPath);
-    const historyPath = await join(webFolder, WEB_HISTORY_FILE);
-    
+    const root = getProjectRoot();
+    const sep = root.includes('\\') ? '\\' : '/';
+    const historyPath = [root, WEB_FOLDER, 'history.json'].join(sep);
+
     let history: typeof entry[] = [];
     try {
-      if (await exists(historyPath)) {
-        const content = await import('@tauri-apps/plugin-fs').then(fs => fs.readTextFile(historyPath));
-        history = JSON.parse(content);
-      }
+      const content = await readWebFile(historyPath);
+      history = JSON.parse(content);
     } catch {
       history = [];
     }
-    
-    // Add new entry, keep last 100
+
     history.push(entry);
     if (history.length > 100) {
       history = history.slice(-100);
     }
-    
-    await writeTextFile(historyPath, JSON.stringify(history, null, 2));
+
+    await writeWebFile(historyPath, JSON.stringify(history, null, 2));
   } catch (err) {
     console.warn('[browserExecutor] Could not record web history:', err);
   }
@@ -144,16 +160,11 @@ async function loadWebHistory(): Promise<Array<{
   dataFiles?: string[];
   timestamp: string;
 }>> {
-  const projectPath = useWorkbenchStore.getState().projectPath;
-  if (!projectPath) return [];
-  
   try {
-    const webFolder = await join(projectPath, WEB_FOLDER);
-    const historyPath = await join(webFolder, WEB_HISTORY_FILE);
-    
-    if (!await exists(historyPath)) return [];
-    
-    const content = await import('@tauri-apps/plugin-fs').then(fs => fs.readTextFile(historyPath));
+    const root = getProjectRoot();
+    const sep = root.includes('\\') ? '\\' : '/';
+    const historyPath = [root, WEB_FOLDER, 'history.json'].join(sep);
+    const content = await readWebFile(historyPath);
     return JSON.parse(content);
   } catch {
     return [];
@@ -175,17 +186,18 @@ async function getRecentWebHistorySummary(limit = 5): Promise<string> {
   return `Recent web tasks:\n${lines.join('\n')}`;
 }
 
-// Initialize the .codescout_web folder structure for the current project
 async function initWebFolder(): Promise<boolean> {
-  const projectPath = useWorkbenchStore.getState().projectPath;
-  if (!projectPath) return false;
-  
   try {
-    await ensureWebFolder(projectPath);
-    console.log('[browserExecutor] Initialized .codescout_web folder at:', projectPath);
+    await resolveAppDataDir();
+    const root = getProjectRoot();
+    const testPath = getWebFilePath('_init_test.txt', 'data');
+    console.log('[browserExecutor] initWebFolder: root =', root, '| test =', testPath);
+    await writeWebFile(testPath, `Init OK at ${new Date().toISOString()}`);
+    const readBack = await readWebFile(testPath);
+    console.log('[browserExecutor] initWebFolder smoke test:', readBack ? 'PASS' : 'FAIL');
     return true;
   } catch (err) {
-    console.warn('[browserExecutor] Failed to initialize web folder:', err);
+    console.error('[browserExecutor] initWebFolder FAILED:', err);
     return false;
   }
 }
@@ -223,6 +235,8 @@ export async function executeBrowserAction(
   onLog?: (msg: string) => void,
 ): Promise<BrowserExecutionResult> {
   const log = onLog ?? console.log;
+
+  console.log(`[browserExecutor] executeBrowserAction called: action=${step.action}, path=${step.path}, hasContent=${!!step.content}, contentLen=${step.content?.length ?? 0}`);
 
   try {
     let result: BrowserResult;
@@ -306,7 +320,7 @@ export async function executeBrowserAction(
         return {
           success: result.success,
           output: result.success
-            ? `Extracted from: ${result.title}\n\n${result.content?.slice(0, 2000) ?? ''}`
+            ? `Extracted from: ${result.title}\n\n${result.content?.slice(0, 15000) ?? ''}`
             : result.error ?? 'Extraction failed',
           pageContent: result.content,
           url: result.url,
@@ -509,6 +523,25 @@ export async function executeBrowserAction(
 
       case 'save_json': {
         const filename = step.path || step.command || `web-data-${Date.now()}.json`;
+
+        // If the LLM provided content directly, write it as-is
+        const directJsonContent = step.content || step.value || '';
+        if (directJsonContent && directJsonContent.length > 2) {
+          log(`💾 Saving JSON file: ${filename} (${directJsonContent.length} chars)...`);
+          try {
+            const fullPath = await getWebFilePath(filename, 'data');
+            log(`💾 Writing to: ${fullPath}`);
+            await writeWebFile(fullPath, directJsonContent);
+            return {
+              success: true,
+              output: `Saved to: ${fullPath} (${directJsonContent.length} chars)`,
+            };
+          } catch (err) {
+            log(`❌ Save JSON error: ${err}`);
+            return { success: false, output: `Failed to save JSON: ${err}` };
+          }
+        }
+
         log(`💾 Saving data to JSON: ${filename}...`);
         try {
           const rawData = getAccumulatedData();
@@ -526,10 +559,10 @@ export async function executeBrowserAction(
           const jsonContent = JSON.stringify(organized, null, 2);
           const fullPath = await getWebFilePath(filename, 'data');
           log(`💾 Writing to: ${fullPath}`);
-          await writeTextFile(fullPath, jsonContent);
+          await writeWebFile(fullPath, jsonContent);
           return {
             success: true,
-            output: `Saved JSON to: .codescout_web/data/${filename} (${jsonContent.length} bytes, ${rawData.length} items)`,
+            output: `Saved JSON to: ${fullPath} (${jsonContent.length} bytes, ${rawData.length} items)`,
           };
         } catch (err) {
           log(`❌ Save JSON error: ${err}`);
@@ -580,10 +613,10 @@ export async function executeBrowserAction(
           const csvContent = csvLines.join('\n');
           const fullPath = await getWebFilePath(filename, 'data');
           log(`💾 Writing to: ${fullPath}`);
-          await writeTextFile(fullPath, csvContent);
+          await writeWebFile(fullPath, csvContent);
           return {
             success: true,
-            output: `Saved CSV to: .codescout_web/data/${filename} (${rows.length} rows)`,
+            output: `Saved CSV to: ${fullPath} (${rows.length} rows)`,
           };
         } catch (err) {
           log(`❌ Save CSV error: ${err}`);
@@ -593,12 +626,39 @@ export async function executeBrowserAction(
 
       case 'save_markdown': {
         const filename = step.path || step.command || 'web-report.md';
+        console.log(`[browserExecutor] save_markdown hit: filename=${filename}, hasContent=${!!(step.content || step.value)}, contentLen=${(step.content || step.value || '').length}`);
+
+        // If the LLM provided content directly, write it as-is (most common for scraping)
+        const directContent = step.content || step.value || '';
+        if (directContent) {
+          log(`📝 Saving markdown file: ${filename} (${directContent.length} chars)...`);
+          try {
+            const fullPath = await getWebFilePath(filename, 'data');
+            console.log(`[browserExecutor] save_markdown WRITING: ${fullPath} (${directContent.length} chars)`);
+            log(`💾 Writing to: ${fullPath}`);
+            await writeWebFile(fullPath, directContent);
+            return {
+              success: true,
+              output: `Saved to: ${fullPath} (${directContent.length} chars)`,
+            };
+          } catch (err) {
+            console.error(`[browserExecutor] save_markdown WRITE FAILED:`, err);
+            log(`❌ Save markdown error: ${err}`);
+            return { success: false, output: `Failed to save markdown: ${err}` };
+          }
+        }
+
+        // Fallback: generate a report from accumulated data
         log(`📝 Saving report to Markdown: ${filename}...`);
         try {
           const data = getAccumulatedData();
           let mdContent = '# Web Automation Report\n\n';
           mdContent += `Generated: ${new Date().toISOString()}\n\n`;
           
+          if (data.length === 0) {
+            mdContent += '_No data was accumulated. Use browser_extract or crawl before saving._\n';
+          }
+
           for (const item of data) {
             mdContent += `## ${item.type}\n\n`;
             if (Array.isArray(item.data)) {
@@ -608,7 +668,7 @@ export async function executeBrowserAction(
                   if (obj.title && obj.url) {
                     mdContent += `- **${obj.title}**: ${obj.url}\n`;
                   } else if (obj.content) {
-                    mdContent += `${String(obj.content).slice(0, 500)}...\n\n`;
+                    mdContent += `${String(obj.content)}\n\n`;
                   } else {
                     mdContent += `- ${JSON.stringify(entry)}\n`;
                   }
@@ -624,14 +684,39 @@ export async function executeBrowserAction(
           
           const fullPath = await getWebFilePath(filename, 'data');
           log(`💾 Writing to: ${fullPath}`);
-          await writeTextFile(fullPath, mdContent);
+          await writeWebFile(fullPath, mdContent);
           return {
             success: true,
-            output: `Saved Markdown report to: .codescout_web/data/${filename}`,
+            output: `Saved Markdown report to: ${fullPath} (${data.length} items, ${mdContent.length} bytes)`,
           };
         } catch (err) {
           log(`❌ Save Markdown error: ${err}`);
           return { success: false, output: `Failed to save Markdown: ${err}` };
+        }
+      }
+
+      case 'save_text':
+      case 'save_file': {
+        const filename = step.path || step.command;
+        const textContent = step.content || step.value || '';
+        if (!filename) {
+          return { success: false, output: 'No filename provided for save_text. Provide a "path" field.' };
+        }
+        if (!textContent) {
+          return { success: false, output: 'No content provided for save_text. Provide a "content" field.' };
+        }
+        log(`📝 Saving text file: ${filename} (${textContent.length} chars)...`);
+        try {
+          const fullPath = await getWebFilePath(filename, 'data');
+          log(`💾 Writing to: ${fullPath}`);
+          await writeWebFile(fullPath, textContent);
+          return {
+            success: true,
+            output: `Saved to: ${fullPath} (${textContent.length} chars)`,
+          };
+        } catch (err) {
+          log(`❌ Save text error: ${err}`);
+          return { success: false, output: `Failed to save text file: ${err}` };
         }
       }
 
@@ -643,14 +728,12 @@ export async function executeBrowserAction(
           if (!result.success || !result.screenshot) {
             return { success: false, output: 'Failed to capture screenshot' };
           }
-          // Convert base64 to binary
-          const binaryData = Uint8Array.from(atob(result.screenshot), c => c.charCodeAt(0));
           const fullPath = await getWebFilePath(filename, 'screenshots');
           log(`💾 Writing to: ${fullPath}`);
-          await writeFile(fullPath, binaryData);
+          await writeBinaryWebFile(fullPath, result.screenshot);
           return {
             success: true,
-            output: `Saved screenshot to: .codescout_web/screenshots/${filename}`,
+            output: `Saved screenshot to: ${fullPath}`,
             screenshot: result.screenshot,
           };
         } catch (err) {
@@ -660,6 +743,7 @@ export async function executeBrowserAction(
       }
 
       default:
+        console.error(`[browserExecutor] UNKNOWN ACTION: "${step.action}" — full step:`, JSON.stringify(step));
         return {
           success: false,
           output: `Unknown browser action: ${step.action}`,

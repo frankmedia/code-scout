@@ -119,7 +119,6 @@ const SessionSidebar = () => {
     if (activeProjectId) {
       setActiveWebSession(activeProjectId, id);
     }
-    // Switch to web tab
     setActiveCenterTab(CENTER_TAB_WEB);
   };
 

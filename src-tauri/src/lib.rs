@@ -153,56 +153,73 @@ fn read_project_dir(path: String) -> Result<Vec<FileEntry>, String> {
     Ok(read_dir_recursive(dir, "", 0, &mut counter))
 }
 
+/// Resolve a program name to its absolute path, checking common Node.js locations.
+fn resolve_program(program: &str) -> String {
+    if program == "node" || program == "npm" || program == "npx" {
+        let home = std::env::var("HOME").unwrap_or_default();
+        // Check nvm
+        let nvm_base = format!("{}/.nvm/versions/node", home);
+        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+            let mut versions: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            versions.sort();
+            if let Some(ver) = versions.last() {
+                let bin = format!("{}/{}/bin/{}", nvm_base, ver, program);
+                if Path::new(&bin).exists() {
+                    return bin;
+                }
+            }
+        }
+        // Check fnm (fast node manager)
+        let fnm_base = format!("{}/.local/share/fnm/node-versions", home);
+        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+            let mut versions: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            versions.sort();
+            if let Some(ver) = versions.last() {
+                let bin = format!("{}/{}/installation/bin/{}", fnm_base, ver, program);
+                if Path::new(&bin).exists() {
+                    return bin;
+                }
+            }
+        }
+        // Check standard locations (Homebrew, system, volta, etc.)
+        for loc in &[
+            format!("/usr/local/bin/{}", program),
+            format!("/opt/homebrew/bin/{}", program),
+            format!("/usr/bin/{}", program),
+            format!("{}/.volta/bin/{}", home, program),
+            format!("{}/.local/bin/{}", home, program),
+        ] {
+            if Path::new(loc).exists() {
+                return loc.clone();
+            }
+        }
+        program.to_string()
+    } else {
+        program.to_string()
+    }
+}
+
+/// Get the bin directory for the resolved node, so npm/npx can find each other.
+fn get_node_bin_dir() -> Option<String> {
+    let resolved = resolve_program("node");
+    if resolved == "node" { return None; }
+    Path::new(&resolved).parent().map(|p| p.to_string_lossy().to_string())
+}
+
 /// Spawn a background process (node, etc.) and return its PID.
-/// Finds the executable by checking common locations and PATH.
 #[tauri::command]
 fn spawn_background(program: String, args: Vec<String>, cwd: Option<String>, env: Option<std::collections::HashMap<String, String>>) -> Result<u32, String> {
     use std::process::{Command as StdCommand, Stdio};
 
-    // Resolve the program path — check common locations for node/npm
-    let resolved = if program == "node" || program == "npm" || program == "npx" {
-        // Check common node locations
-        let home = std::env::var("HOME").unwrap_or_default();
-        let candidates: Vec<String> = vec![
-            // nvm (most common on macOS/Linux)
-            format!("{}/.nvm/versions/node", home),
-        ];
-        let mut found: Option<String> = None;
-        for base in &candidates {
-            if let Ok(entries) = std::fs::read_dir(base) {
-                // Pick the latest version directory
-                let mut versions: Vec<String> = entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .collect();
-                versions.sort();
-                if let Some(ver) = versions.last() {
-                    let bin = format!("{}/{}/bin/{}", base, ver, program);
-                    if Path::new(&bin).exists() {
-                        found = Some(bin);
-                        break;
-                    }
-                }
-            }
-        }
-        if found.is_none() {
-            // Check standard locations
-            for loc in &[
-                format!("/usr/local/bin/{}", program),
-                format!("/opt/homebrew/bin/{}", program),
-                format!("/usr/bin/{}", program),
-            ] {
-                if Path::new(loc).exists() {
-                    found = Some(loc.clone());
-                    break;
-                }
-            }
-        }
-        found.unwrap_or(program.clone())
-    } else {
-        program.clone()
-    };
+    let resolved = resolve_program(&program);
 
     // Log to file for diagnostics, discard stdin
     let log_path = std::env::temp_dir().join("codescout-spawn.log");
@@ -217,8 +234,16 @@ fn spawn_background(program: String, args: Vec<String>, cwd: Option<String>, env
         .stderr(log_err)
         .stdin(Stdio::null());
 
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
+    // Ensure node/npm/npx can find each other by adding node's bin dir to PATH
+    if let Some(node_bin) = get_node_bin_dir() {
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{}", node_bin, current_path));
+    }
+
+    if let Some(dir) = &cwd {
+        if Path::new(dir).exists() {
+            cmd.current_dir(dir);
+        }
     }
     if let Some(env_map) = env {
         for (k, v) in env_map {
@@ -230,6 +255,50 @@ fn spawn_background(program: String, args: Vec<String>, cwd: Option<String>, env
         .map_err(|e| format!("Failed to spawn '{}' (resolved: '{}'): {}", program, resolved, e))?;
 
     Ok(child.id())
+}
+
+/// Run a command synchronously and return its stdout+stderr. Used for npm install, etc.
+/// Reuses the same executable resolution as spawn_background.
+#[tauri::command]
+async fn run_command(program: String, args: Vec<String>, cwd: Option<String>, env: Option<std::collections::HashMap<String, String>>) -> Result<String, String> {
+    use std::process::{Command as StdCommand, Stdio};
+
+    let resolved = resolve_program(&program);
+
+    let mut cmd = StdCommand::new(&resolved);
+    cmd.args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+
+    // Ensure node/npm/npx can find each other by adding node's bin dir to PATH
+    if let Some(node_bin) = get_node_bin_dir() {
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{}", node_bin, current_path));
+    }
+
+    if let Some(dir) = &cwd {
+        if Path::new(dir).exists() {
+            cmd.current_dir(dir);
+        }
+    }
+    if let Some(env_map) = env {
+        for (k, v) in env_map {
+            cmd.env(k, v);
+        }
+    }
+
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to run '{}' (resolved: '{}'): {}", program, resolved, e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Err(format!("Command failed (exit {}): {}{}", output.status.code().unwrap_or(-1), stderr, stdout));
+    }
+
+    Ok(format!("{}{}", stdout, stderr))
 }
 
 /// Write text content to any file path, creating parent directories as needed.
@@ -561,6 +630,7 @@ pub fn run() {
             read_project_dir,
             read_file_text,
             spawn_background,
+            run_command,
             write_file,
             write_binary_file,
             create_dir,

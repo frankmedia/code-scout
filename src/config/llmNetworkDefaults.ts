@@ -1,12 +1,8 @@
 /**
- * Default host for Ollama and llama-server when they run on another machine on your LAN.
- * Change `LAN_LLM_HOST` if your server IP moves.
- *
- * On the **server** (192.168.1.34):
- * - Ollama: listen on all interfaces, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve` (or set in ollama service env).
- * - llama-server: use `--host 0.0.0.0` so port 8080+ is reachable from this Mac.
+ * Default host for Ollama and llama-server.
+ * Defaults to localhost — users can change to a LAN IP in Settings → Discover.
  */
-export const LAN_LLM_HOST = '192.168.1.34';
+export const LAN_LLM_HOST = 'localhost';
 
 /** Ollama API base (no trailing slash) */
 export const DEFAULT_OLLAMA_URL = `http://${LAN_LLM_HOST}:11434`;

@@ -72,7 +72,7 @@ fn read_dir_recursive(
 
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && name != ".env" && name != ".gitignore" && name != ".codescout" {
+        if name.starts_with('.') && name != ".env" && name != ".gitignore" && name != ".codescout" && name != ".codescout_web" {
             continue;
         }
         let path = entry.path();
@@ -151,6 +151,85 @@ fn read_project_dir(path: String) -> Result<Vec<FileEntry>, String> {
     }
     let mut counter = 0usize;
     Ok(read_dir_recursive(dir, "", 0, &mut counter))
+}
+
+/// Spawn a background process (node, etc.) and return its PID.
+/// Finds the executable by checking common locations and PATH.
+#[tauri::command]
+fn spawn_background(program: String, args: Vec<String>, cwd: Option<String>, env: Option<std::collections::HashMap<String, String>>) -> Result<u32, String> {
+    use std::process::{Command as StdCommand, Stdio};
+
+    // Resolve the program path — check common locations for node/npm
+    let resolved = if program == "node" || program == "npm" || program == "npx" {
+        // Check common node locations
+        let home = std::env::var("HOME").unwrap_or_default();
+        let candidates: Vec<String> = vec![
+            // nvm (most common on macOS/Linux)
+            format!("{}/.nvm/versions/node", home),
+        ];
+        let mut found: Option<String> = None;
+        for base in &candidates {
+            if let Ok(entries) = std::fs::read_dir(base) {
+                // Pick the latest version directory
+                let mut versions: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                versions.sort();
+                if let Some(ver) = versions.last() {
+                    let bin = format!("{}/{}/bin/{}", base, ver, program);
+                    if Path::new(&bin).exists() {
+                        found = Some(bin);
+                        break;
+                    }
+                }
+            }
+        }
+        if found.is_none() {
+            // Check standard locations
+            for loc in &[
+                format!("/usr/local/bin/{}", program),
+                format!("/opt/homebrew/bin/{}", program),
+                format!("/usr/bin/{}", program),
+            ] {
+                if Path::new(loc).exists() {
+                    found = Some(loc.clone());
+                    break;
+                }
+            }
+        }
+        found.unwrap_or(program.clone())
+    } else {
+        program.clone()
+    };
+
+    // Log to file for diagnostics, discard stdin
+    let log_path = std::env::temp_dir().join("codescout-spawn.log");
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("Failed to create log file: {}", e))?;
+    let log_err = log_file.try_clone()
+        .map_err(|e| format!("Failed to clone log file: {}", e))?;
+
+    let mut cmd = StdCommand::new(&resolved);
+    cmd.args(&args)
+        .stdout(log_file)
+        .stderr(log_err)
+        .stdin(Stdio::null());
+
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    if let Some(env_map) = env {
+        for (k, v) in env_map {
+            cmd.env(k, v);
+        }
+    }
+
+    let child = cmd.spawn()
+        .map_err(|e| format!("Failed to spawn '{}' (resolved: '{}'): {}", program, resolved, e))?;
+
+    Ok(child.id())
 }
 
 /// Write text content to any file path, creating parent directories as needed.
@@ -481,6 +560,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_project_dir,
             read_file_text,
+            spawn_background,
             write_file,
             write_binary_file,
             create_dir,

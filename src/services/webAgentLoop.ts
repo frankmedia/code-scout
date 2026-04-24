@@ -10,7 +10,8 @@
 
 import { callModel, modelToRequest, type ModelRequestMessage } from './modelApi';
 import { useModelStore, type ModelConfig } from '../store/modelStore';
-import { executeBrowserAction, clearAccumulatedData, getAccumulatedData, recordWebHistory, getRecentWebHistorySummary, initWebFolder } from './browserExecutor';
+import { executeBrowserAction, clearAccumulatedData, getAccumulatedData, recordWebHistory, getRecentWebHistorySummary, initWebFolder, writeWebFile, getWebFilePath } from './browserExecutor';
+import { launchBrowser } from './browserService';
 import { roughTokensFromRequestMessages } from '../utils/tokenEstimate';
 import { contextLimitForModel } from '../utils/tokenEstimate';
 import * as browserService from './browserService';
@@ -531,18 +532,327 @@ function parseAgentResponse(text: string): WebAgentAction | null {
   }
 }
 
+/**
+ * Extract a list of URLs from a task description when the user provides an explicit batch.
+ */
+function extractBatchUrls(task: string): string[] {
+  const urlRegex = /https?:\/\/[^\s,<>"')\]]+/g;
+  const matches = task.match(urlRegex) || [];
+  // Deduplicate while preserving order
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const url of matches) {
+    // Strip trailing punctuation that's not part of the URL
+    const clean = url.replace(/[.,;:!?)}\]]+$/, '');
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      unique.push(clean);
+    }
+  }
+  return unique;
+}
+
+/**
+ * Derive a human-readable filename from a URL slug.
+ */
+function urlToFilename(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/^\/|\/$/g, '');
+    if (!path) return 'index.md';
+    return path.replace(/\//g, '-').replace(/[^a-zA-Z0-9_-]/g, '') + '.md';
+  } catch {
+    return 'page.md';
+  }
+}
+
+/**
+ * Fast batch crawl: navigate → extract → save for each URL without LLM involvement.
+ * Runs 10-50x faster than the LLM-driven loop for bulk crawling.
+ */
+async function runBatchCrawl(
+  urls: string[],
+  task: string,
+  callbacks: WebAgentCallbacks,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  callbacks.onThinking(`Batch mode: ${urls.length} URLs detected — crawling directly (no AI per-page)`);
+
+  // Ensure browser is running — launchBrowser handles startBrowserAgent internally
+  let browserReady = false;
+  try {
+    const status = await browserService.getBrowserStatus();
+    browserReady = !!status.browserRunning;
+  } catch {
+    // Agent not connected yet — need to launch
+  }
+  if (!browserReady) {
+    callbacks.onThinking('Launching browser...');
+    const launchAction: WebAgentAction = { action: 'browser_launch', url: urls[0], reason: 'Batch crawl' };
+    callbacks.onAction(launchAction);
+    try {
+      const launchResult = await launchBrowser(false);
+      if (!launchResult.success) {
+        callbacks.onError(`Failed to launch browser: ${launchResult.error || 'unknown error'}`);
+        return;
+      }
+      callbacks.onActionComplete?.(launchAction, { success: true, output: 'Browser launched' });
+      // Give the browser a moment to fully initialize
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (err) {
+      callbacks.onError(`Failed to launch browser: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+  }
+
+  // Check if the task asks for first-line URL prefix
+  const wantsUrlPrefix = /first line.*(url|page url|the url)/i.test(task);
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < urls.length; i++) {
+    if (abortSignal?.aborted) {
+      callbacks.onThinking(`Stopped at ${i}/${urls.length} (${successCount} saved, ${errorCount} errors)`);
+      recordWebHistory({
+        task,
+        url: urls[i],
+        actions: sessionActions,
+        result: 'stopped',
+        dataFiles: sessionDataFiles.length > 0 ? sessionDataFiles : undefined,
+        timestamp: new Date().toISOString(),
+      });
+      callbacks.onError('Aborted by user');
+      return;
+    }
+
+    const url = urls[i];
+    const filename = urlToFilename(url);
+    callbacks.onThinking(`[${i + 1}/${urls.length}] ${filename}`);
+
+    const navAction: WebAgentAction = {
+      action: 'browser_goto',
+      url,
+      reason: `Page ${i + 1} of ${urls.length}`,
+    };
+    callbacks.onAction(navAction);
+
+    try {
+      // Navigate
+      const gotoResult = await browserService.browserGoto(url);
+      if (!gotoResult.success) {
+        const errMsg = gotoResult.error || gotoResult.message || 'Navigation failed';
+        console.warn(`[batchCrawl] goto FAILED for ${url}:`, errMsg);
+        callbacks.onActionComplete?.(navAction, { success: false, output: errMsg });
+        errorCount++;
+        continue;
+      }
+      callbacks.onActionComplete?.(navAction, { success: true, output: `Navigated to ${url}` });
+
+      // Brief wait for dynamic content
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Extract main content
+      const extractResult = await browserService.browserExtract();
+      if (!extractResult.success || !extractResult.content) {
+        const errMsg = extractResult.error || 'Extraction returned no content';
+        console.warn(`[batchCrawl] extract FAILED for ${url}:`, errMsg);
+        callbacks.onActionComplete?.(navAction, { success: false, output: errMsg });
+        errorCount++;
+        continue;
+      }
+
+      // Build markdown: optional URL prefix + extracted content
+      let markdown = '';
+      if (wantsUrlPrefix) {
+        markdown += url + '\n\n';
+      }
+      const cleaned = (extractResult.content || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('\n');
+      markdown += cleaned;
+
+      // Save
+      const savePath = getWebFilePath(filename, 'data');
+      const saveAction: WebAgentAction = { action: 'save_markdown', path: filename, reason: `Save ${filename}` };
+      callbacks.onAction(saveAction);
+
+      await writeWebFile(savePath, markdown);
+      sessionDataFiles.push(`.codescout_web/data/${filename}`);
+      sessionActions.push(`saved ${filename}`);
+      callbacks.onActionComplete?.(saveAction, { success: true, output: `Saved ${filename} (${markdown.length} chars)` });
+      successCount++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[batchCrawl] EXCEPTION for ${url}:`, msg);
+      callbacks.onActionComplete?.(navAction, { success: false, output: msg });
+      errorCount++;
+    }
+  }
+
+  const summary = `Batch crawl complete: ${successCount} pages saved, ${errorCount} errors out of ${urls.length} URLs.`;
+  callbacks.onThinking(summary);
+
+  recordWebHistory({
+    task,
+    url: urls[0],
+    actions: sessionActions,
+    result: errorCount === urls.length ? 'error' : 'success',
+    dataFiles: sessionDataFiles.length > 0 ? sessionDataFiles : undefined,
+    timestamp: new Date().toISOString(),
+  });
+
+  callbacks.onComplete(summary);
+}
+
+/**
+ * Ask the Orchestrator for a high-level plan given the user's task.
+ * Returns the plan text (used as context for the Coder execution loop).
+ */
+async function getOrchestratorPlan(
+  task: string,
+  orchestratorModel: ModelConfig,
+  state: WebAgentState,
+  callbacks: WebAgentCallbacks,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  callbacks.onThinking('Orchestrator planning…');
+
+  const systemPrompt = `You are the Orchestrator for a web browsing agent. Your job is to produce a concise ACTION PLAN, NOT to execute anything.
+
+Given the user's task, output a numbered step-by-step plan using only these available actions:
+browser_launch, browser_goto, browser_click, browser_fill, browser_extract, browser_screenshot,
+browser_scroll, browser_wait, accept_cookies, wait_for_user, detect_form, get_links,
+crawl, sitemap, save_text, save_json, save_csv, save_markdown, save_screenshot, done.
+
+**Rules:**
+- Be specific: include exact URLs, selectors, filenames where known.
+- If the task involves multiple pages, list each page's URL and what to do there.
+- Keep it concise — the Coder will interpret and execute each step.
+- End with "done" and a summary description.
+- Output ONLY the plan, no preamble.`;
+
+  const browserStatus = state.browserRunning
+    ? `Browser is running. Current URL: ${state.currentUrl || '(blank)'}`
+    : 'Browser is NOT running — plan should start with browser_launch.';
+
+  const userPrompt = `**TASK:** ${task}\n\n**BROWSER STATUS:** ${browserStatus}\n\nProduce a numbered plan.`;
+
+  const messages: ModelRequestMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  let planText = '';
+  const request = modelToRequest(orchestratorModel, messages, { maxOutputTokens: 2000, signal: abortSignal });
+  await new Promise<void>((resolve, reject) => {
+    callModel(
+      request,
+      (chunk) => { planText += chunk; },
+      () => resolve(),
+      reject,
+      (usage) => {
+        if (callbacks.trackTokens) {
+          callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
+        }
+      },
+    );
+  });
+
+  return planText.trim();
+}
+
+/**
+ * Build a system prompt for the Coder that includes the Orchestrator's plan.
+ */
+function buildCoderExecutionSystemPrompt(plan: string): string {
+  return `You are the Coder — a web browsing executor. You receive a PLAN from the Orchestrator and execute it step-by-step.
+
+**PLAN TO FOLLOW:**
+${plan}
+
+**Your loop:**
+1. OBSERVE: You see the current browser state
+2. DECIDE: Pick the next action from the plan (adapt if needed based on what you see)
+3. ACT: Output ONE action in JSON format
+
+**Response format (JSON only, no markdown):**
+{
+  "thinking": "Brief reasoning",
+  "action": "action_name",
+  "selector": "CSS selector (for click/fill)",
+  "value": "text value (for fill) or parameter",
+  "url": "URL (for goto)",
+  "path": "filename (for save)",
+  "content": "text content (for save_text/save_markdown)",
+  "reason": "Why this action"
+}
+
+**Available actions:**
+browser_launch, browser_goto, browser_click, browser_fill, browser_extract, browser_screenshot,
+browser_scroll, browser_wait, accept_cookies, wait_for_user, detect_form, get_links,
+crawl, sitemap, save_text, save_json, save_csv, save_markdown, save_screenshot, done.
+
+**Rules:**
+- Follow the plan step-by-step but ADAPT if the page state differs from expectations.
+- When saving markdown from a page, include the extracted content in the "content" field.
+- For save_text/save_markdown: always provide BOTH "path" and "content" fields.
+- When you see a cookie banner, use accept_cookies.
+- When the plan is complete, use "done" with a summary in "value".
+- Output ONLY JSON — no markdown, no explanation.`;
+}
+
+/** Call a model and return the response text. Tracks tokens via callback. */
+async function callModelForText(
+  model: ModelConfig,
+  messages: ModelRequestMessage[],
+  role: 'orchestrator' | 'coder',
+  callbacks: WebAgentCallbacks,
+  maxOutputTokens = 1000,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  let text = '';
+  const request = modelToRequest(model, messages, { maxOutputTokens, signal: abortSignal });
+  await new Promise<void>((resolve, reject) => {
+    callModel(
+      request,
+      (chunk) => { text += chunk; },
+      () => resolve(),
+      reject,
+      (usage) => {
+        if (callbacks.trackTokens) {
+          callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, role);
+        }
+      },
+    );
+  });
+  return text;
+}
+
+// How many consecutive Coder failures before escalating to Orchestrator
+const CODER_ESCALATION_THRESHOLD = 3;
+
 export async function runWebAgentLoop(
   task: string,
   callbacks: WebAgentCallbacks,
   abortSignal?: AbortSignal
 ): Promise<void> {
   const modelStore = useModelStore.getState();
-  const modelConfig = modelStore.getModelForRole('orchestrator');
-  
-  if (!modelConfig) {
+  const orchestratorModel = modelStore.getModelForRole('orchestrator');
+  const coderModel = modelStore.getModelForRole('coder');
+
+  // We need at least an orchestrator
+  if (!orchestratorModel) {
     callbacks.onError('No orchestrator model configured. Go to Settings to add one.');
     return;
   }
+
+  // Decide which model drives the per-step loop
+  const stepModel = coderModel || orchestratorModel;
+  const stepRole: 'orchestrator' | 'coder' = coderModel ? 'coder' : 'orchestrator';
+  const hasDelegation = !!coderModel;
   
   clearAccumulatedData();
   sessionActions = [];
@@ -550,6 +860,14 @@ export async function runWebAgentLoop(
   
   // Initialize .codescout_web folder structure at the start of every web task
   await initWebFolder();
+
+  // ── Batch URL crawl fast-path ──────────────────────────────────────────────
+  const batchUrls = extractBatchUrls(task);
+  console.log(`[webAgentLoop] Task length: ${task.length}, batch URLs found: ${batchUrls.length}, hasDelegation: ${hasDelegation}`);
+  if (batchUrls.length >= 5) {
+    await runBatchCrawl(batchUrls, task, callbacks, abortSignal);
+    return;
+  }
   
   const state: WebAgentState = {
     browserRunning: false,
@@ -566,29 +884,58 @@ export async function runWebAgentLoop(
     error: null,
   };
   
-  // Check initial browser status
-  const status = await browserService.getBrowserStatus();
-  if (status.success && status.browserRunning) {
-    state.browserRunning = true;
-    state.currentUrl = status.currentUrl || null;
-    state.currentTitle = status.currentTitle || null;
+  // Check initial browser status (non-fatal if agent isn't running yet)
+  try {
+    const status = await browserService.getBrowserStatus();
+    if (status.browserRunning) {
+      state.browserRunning = true;
+      state.currentUrl = status.currentUrl || null;
+      state.currentTitle = status.currentTitle || null;
+    }
+  } catch {
+    // Browser agent not running — that's fine, the agent will launch it
   }
   
   callbacks.onStateChange({ ...state });
-  
-  // Build system prompt with history context
-  const systemPrompt = await buildAgentSystemPrompt();
+
+  // ── Phase 1: Orchestrator produces a plan (single call) ──────────────────
+  let plan = '';
+  if (hasDelegation) {
+    try {
+      plan = await getOrchestratorPlan(task, orchestratorModel, state, callbacks, abortSignal);
+      callbacks.onThinking(`Plan ready — Coder executing (${stepModel.name || stepModel.modelId})…`);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        callbacks.onError('Aborted by user');
+        return;
+      }
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isNetworkErr = /load failed|fetch|network|econnrefused|timeout/i.test(errMsg);
+      if (isNetworkErr) {
+        console.error('[webAgentLoop] Orchestrator unreachable:', errMsg);
+        callbacks.onThinking(`Orchestrator unreachable (${errMsg}) — trying Coder directly…`);
+      } else {
+        callbacks.onThinking('Orchestrator plan failed — Coder proceeding without plan');
+      }
+    }
+  }
+
+  // ── Phase 2: Step-by-step execution (Coder, or Orchestrator fallback) ────
+  const systemPrompt = hasDelegation && plan
+    ? buildCoderExecutionSystemPrompt(plan)
+    : await buildAgentSystemPrompt();
+
   let messages: ModelRequestMessage[] = [
     { role: 'system', content: systemPrompt },
   ];
 
-  const tokenBudget = webContextBudget(modelConfig);
+  const tokenBudget = webContextBudget(stepModel);
   let contextErrors = 0;
+  let consecutiveCoderFailures = 0;
   
   while (!state.done && state.stepCount < state.maxSteps) {
     if (abortSignal?.aborted) {
       state.error = 'Aborted by user';
-      // Record history on abort
       recordWebHistory({
         task,
         url: state.currentUrl || undefined,
@@ -602,7 +949,8 @@ export async function runWebAgentLoop(
     }
     
     state.stepCount++;
-    callbacks.onThinking(`Step ${state.stepCount}: Analyzing page state...`);
+    const modelLabel = hasDelegation ? (consecutiveCoderFailures >= CODER_ESCALATION_THRESHOLD ? 'Orchestrator' : 'Coder') : '';
+    callbacks.onThinking(`Step ${state.stepCount}${modelLabel ? ` [${modelLabel}]` : ''}: Analyzing…`);
     
     // Build observation prompt
     const observationPrompt = buildObservationPrompt(task, state);
@@ -611,34 +959,25 @@ export async function runWebAgentLoop(
     // ── Proactive context pruning ──
     const estimatedTokens = roughTokensFromRequestMessages(messages);
     if (estimatedTokens > tokenBudget) {
-      callbacks.onThinking(`Context ${Math.round(estimatedTokens / 1000)}k tok > ${Math.round(tokenBudget / 1000)}k budget — compressing history…`);
+      callbacks.onThinking(`Context ${Math.round(estimatedTokens / 1000)}k > ${Math.round(tokenBudget / 1000)}k budget — compressing…`);
       messages = pruneWebMessages(messages, tokenBudget);
     }
+
+    // Choose model: escalate to orchestrator if coder keeps failing
+    const useOrchestrator = hasDelegation && consecutiveCoderFailures >= CODER_ESCALATION_THRESHOLD;
+    const activeModel = useOrchestrator ? orchestratorModel : stepModel;
+    const activeRole: 'orchestrator' | 'coder' = useOrchestrator ? 'orchestrator' : stepRole;
     
     // Get AI's next action (retry on transient + context errors)
     let responseText = '';
     let contextRetried = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       responseText = '';
-      const aiRequest = modelToRequest(modelConfig, messages, { maxOutputTokens: 1000, signal: abortSignal });
       try {
-        await new Promise<void>((resolve, reject) => {
-          callModel(
-            aiRequest,
-            (chunk) => { responseText += chunk; },
-            () => resolve(),
-            reject,
-            (usage) => {
-              if (callbacks.trackTokens) {
-                callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
-              }
-            }
-          );
-        });
+        responseText = await callModelForText(activeModel, messages, activeRole, callbacks, 1000, abortSignal);
         break;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') throw err;
-        // Context-limit recovery: prune aggressively and retry
         if (err instanceof Error && isContextLimitError(err) && !contextRetried) {
           contextErrors++;
           if (contextErrors > MAX_CONTEXT_RETRIES) {
@@ -649,11 +988,15 @@ export async function runWebAgentLoop(
           contextRetried = true;
           callbacks.onThinking(`Context limit hit — pruning aggressively (attempt ${contextErrors}/${MAX_CONTEXT_RETRIES})…`);
           messages = pruneWebMessages(messages, Math.floor(tokenBudget * 0.6), Math.max(2, KEEP_RECENT_PAIRS - 2));
-          attempt--; // retry this attempt
+          attempt--;
           continue;
         }
         if (attempt === 1) {
-          state.error = `AI error: ${err instanceof Error ? err.message : String(err)}`;
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const isNetworkErr = /load failed|fetch|network|econnrefused|timeout/i.test(errMsg);
+          state.error = isNetworkErr
+            ? `Model unreachable (${errMsg}). Check that your ${activeRole} model server is running.`
+            : `AI error: ${errMsg}`;
           callbacks.onError(state.error);
           return;
         }
@@ -664,7 +1007,7 @@ export async function runWebAgentLoop(
     
     messages.push({ role: 'assistant', content: responseText });
     
-    // Parse the action — retry up to 2 more times if the LLM sends malformed JSON
+    // Parse the action — retry if malformed JSON
     let action = parseAgentResponse(responseText);
     if (!action) {
       let retryAction: WebAgentAction | null = null;
@@ -676,19 +1019,7 @@ export async function runWebAgentLoop(
         });
         let retryText = '';
         try {
-          await new Promise<void>((resolve, reject) => {
-            callModel(
-              modelToRequest(modelConfig, messages, { maxOutputTokens: 500, signal: abortSignal }),
-              (chunk) => { retryText += chunk; },
-              () => resolve(),
-              reject,
-              (usage) => {
-                if (callbacks.trackTokens) {
-                  callbacks.trackTokens(usage.inputTokens || 0, usage.outputTokens || 0, 'orchestrator');
-                }
-              },
-            );
-          });
+          retryText = await callModelForText(activeModel, messages, activeRole, callbacks, 500, abortSignal);
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') throw err;
           break;
@@ -697,6 +1028,12 @@ export async function runWebAgentLoop(
         retryAction = parseAgentResponse(retryText);
       }
       if (!retryAction) {
+        // Count as a coder failure for escalation
+        consecutiveCoderFailures++;
+        if (consecutiveCoderFailures >= CODER_ESCALATION_THRESHOLD && hasDelegation) {
+          callbacks.onThinking('Coder struggling — escalating to Orchestrator…');
+          continue;
+        }
         state.error = 'Failed to parse AI response as action after retries';
         callbacks.onError(state.error);
         return;
@@ -704,32 +1041,24 @@ export async function runWebAgentLoop(
       action = retryAction;
     }
     
-    callbacks.onAction(action);
+    // Reset failure counter on successful parse
+    consecutiveCoderFailures = 0;
     
-    // Track action for history
+    callbacks.onAction(action);
     sessionActions.push(action.action);
     
-    // Handle "done" action - use Coder for polished final answer
+    // Handle "done" action
     if (action.action === 'done') {
       state.done = true;
-      const orchestratorSummary = action.value || action.reason || 'Task completed';
+      const summary = action.value || action.reason || 'Task completed';
       
-      // Get accumulated data for Coder analysis
       const accumulatedData = getAccumulatedData();
       const extractedDataStr = accumulatedData.length > 0 
-        ? JSON.stringify(accumulatedData.slice(-10), null, 2) // Last 10 items
+        ? JSON.stringify(accumulatedData.slice(-10), null, 2)
         : null;
       
-      // Use Coder to generate polished final answer (free tokens!)
-      state.finalAnswer = await generateCoderAnalysis(
-        task,
-        orchestratorSummary,
-        extractedDataStr,
-        state.pageContent,
-        callbacks
-      );
+      state.finalAnswer = await generateCoderAnalysis(task, summary, extractedDataStr, state.pageContent, callbacks);
       
-      // Record history on success
       recordWebHistory({
         task,
         url: state.currentUrl || undefined,
@@ -743,45 +1072,32 @@ export async function runWebAgentLoop(
       return;
     }
     
-    // Handle "wait_for_user" action - pause and ask user to complete something
+    // Handle "wait_for_user"
     if (action.action === 'wait_for_user') {
       const userMessage = action.value || action.reason || 'Please complete the action in the browser window';
       callbacks.onThinking(`⏸️ Waiting for user: ${userMessage}`);
-      
-      if (callbacks.onActionComplete) {
-        callbacks.onActionComplete(action, { success: true, output: `Waiting for user: ${userMessage}` });
-      }
+      callbacks.onActionComplete?.(action, { success: true, output: `Waiting for user: ${userMessage}` });
       
       if (callbacks.onWaitForUser) {
-        // Wait for user to complete the action and click continue
         await callbacks.onWaitForUser(userMessage);
-        
-        // After user continues, refresh browser state
         const newStatus = await browserService.getBrowserStatus();
         if (newStatus.success) {
           state.browserRunning = newStatus.browserRunning || false;
           if (newStatus.currentUrl) state.currentUrl = newStatus.currentUrl;
           if (newStatus.currentTitle) state.currentTitle = newStatus.currentTitle;
         }
-        
-        // Extract new page content after user action
         const extractResult = await browserService.browserExtract();
-        if (extractResult.success) {
-          state.pageContent = extractResult.content || null;
-        }
-        
+        if (extractResult.success) state.pageContent = extractResult.content || null;
         state.lastActionResult = 'User completed the requested action. Continuing...';
         callbacks.onStateChange({ ...state });
-        continue; // Continue to next iteration
+        continue;
       } else {
-        // No callback provided, just wait a bit and continue
         await new Promise(resolve => setTimeout(resolve, 5000));
         state.lastActionResult = 'Waited 5 seconds for user action';
         continue;
       }
     }
     
-    // Check abort before executing
     if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     // Execute the action
@@ -791,29 +1107,20 @@ export async function runWebAgentLoop(
       const result = await executeAgentAction(action, state);
       if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
       state.lastActionResult = result.output;
+      callbacks.onActionComplete?.(action, result);
       
-      // Notify about action completion with result
-      if (callbacks.onActionComplete) {
-        callbacks.onActionComplete(action, result);
-      }
-      
-      // Track saved files for history
+      // Track saved files
       if (['save_text', 'save_file', 'save_json', 'save_csv', 'save_markdown', 'save_screenshot'].includes(action.action) && result.success) {
         const fileMatch = result.output.match(/\.codescout_web\/(?:data|screenshots)\/([^\s]+)/);
-        if (fileMatch) {
-          sessionDataFiles.push(fileMatch[0]);
-        }
+        if (fileMatch) sessionDataFiles.push(fileMatch[0]);
       }
       
-      // Use Coder to analyze large extraction results (free tokens!)
+      // Use Coder to analyze large extraction results
       const DATA_HEAVY_ACTIONS = ['crawl', 'sitemap', 'browser_extract', 'get_links'];
       if (DATA_HEAVY_ACTIONS.includes(action.action) && result.success && result.output.length > 1000) {
         const analyzed = await analyzeExtractedData(action.action, result.output, task, callbacks);
         state.lastActionResult = analyzed;
-        // Update the callback with analyzed result
-        if (callbacks.onActionComplete) {
-          callbacks.onActionComplete(action, { success: true, output: analyzed });
-        }
+        callbacks.onActionComplete?.(action, { success: true, output: analyzed });
       }
       
       // Update state based on action type
@@ -827,9 +1134,8 @@ export async function runWebAgentLoop(
         state.formFields = null;
       } else if (action.action === 'browser_goto') {
         state.currentUrl = action.url || null;
-        state.formFields = null; // Clear form fields on navigation
+        state.formFields = null;
         state.pageContent = null;
-        // Auto-extract page content after navigation
         const extractResult = await browserService.browserExtract();
         if (extractResult.success) {
           state.currentTitle = extractResult.title || null;
@@ -837,11 +1143,8 @@ export async function runWebAgentLoop(
           state.pageContent = extractResult.content || null;
         }
       } else if (action.action === 'browser_extract') {
-        if (result.success) {
-          state.pageContent = result.output;
-        }
+        if (result.success) state.pageContent = result.output;
       } else if (action.action === 'detect_form') {
-        // Parse form fields from result
         const formMatch = result.output.match(/Found \d+ form/);
         if (formMatch) {
           const forms = getAccumulatedData().forms;
@@ -851,7 +1154,6 @@ export async function runWebAgentLoop(
         }
       }
       
-      // Update browser status
       const newStatus = await browserService.getBrowserStatus();
       if (newStatus.success) {
         state.browserRunning = newStatus.browserRunning || false;
@@ -882,7 +1184,6 @@ export async function runWebAgentLoop(
   
   if (!state.done) {
     state.error = `Reached maximum steps (${MAX_STEPS}) without completing task`;
-    // Record history on max steps
     recordWebHistory({
       task,
       url: state.currentUrl || undefined,

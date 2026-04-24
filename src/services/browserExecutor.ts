@@ -192,9 +192,29 @@ async function initWebFolder(): Promise<boolean> {
     const root = getProjectRoot();
     const testPath = getWebFilePath('_init_test.txt', 'data');
     console.log('[browserExecutor] initWebFolder: root =', root, '| test =', testPath);
-    await writeWebFile(testPath, `Init OK at ${new Date().toISOString()}`);
-    const readBack = await readWebFile(testPath);
-    console.log('[browserExecutor] initWebFolder smoke test:', readBack ? 'PASS' : 'FAIL');
+    await writeFileNative(testPath, `Init OK at ${new Date().toISOString()}`);
+
+    // Load existing files from .codescout_web/data into file tree and saved files tracker
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const sep = root.includes('\\') ? '\\' : '/';
+      const dataDir = [root, WEB_FOLDER, 'data'].join(sep);
+      const entries = await invoke<Array<{ name: string; path: string; type: string; content?: string }>>('read_project_dir', { path: dataDir });
+      const files = entries.filter(e => e.type === 'file' && e.name !== '_init_test.txt');
+      for (const f of files) {
+        const absPath = [dataDir, f.name].join(sep);
+        try {
+          const content = await readWebFile(absPath);
+          const relPath = [WEB_FOLDER, 'data', f.name].join('/');
+          useWorkbenchStore.getState().createFile(relPath, content);
+          trackSavedFile(absPath, content.length);
+        } catch { /* skip unreadable files */ }
+      }
+      console.log('[browserExecutor] initWebFolder: loaded', files.length, 'existing files');
+    } catch (err) {
+      console.log('[browserExecutor] initWebFolder: no existing data dir yet:', err);
+    }
+
     return true;
   } catch (err) {
     console.error('[browserExecutor] initWebFolder FAILED:', err);
@@ -202,7 +222,7 @@ async function initWebFolder(): Promise<boolean> {
   }
 }
 
-export { recordWebHistory, loadWebHistory, getRecentWebHistorySummary, initWebFolder };
+export { recordWebHistory, loadWebHistory, getRecentWebHistorySummary, initWebFolder, writeWebFile, getWebFilePath };
 
 // Store for accumulated data from browser actions (for save_* commands)
 let accumulatedData: { type: string; data: unknown }[] = [];

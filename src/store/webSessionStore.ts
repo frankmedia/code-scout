@@ -120,13 +120,40 @@ export const useWebSessionStore = create<WebSessionState>()(
       },
 
       saveMessages: (projectId, sessionId, messages) => {
+        // Trim heavy data before persisting to avoid localStorage quota errors.
+        // Keep only the last 50 messages and strip large output/content from steps.
+        const MAX_PERSISTED_MESSAGES = 50;
+        const MAX_STEP_OUTPUT = 200;
+        const trimmed = messages.slice(-MAX_PERSISTED_MESSAGES).map(m => {
+          if (!m.taskCard) return m;
+          return {
+            ...m,
+            taskCard: {
+              ...m.taskCard,
+              steps: m.taskCard.steps.map(step => ({
+                ...step,
+                output: step.output && step.output.length > MAX_STEP_OUTPUT
+                  ? step.output.slice(0, MAX_STEP_OUTPUT) + '…'
+                  : step.output,
+              })),
+              // Strip large result text
+              result: m.taskCard.result && m.taskCard.result.length > 2000
+                ? m.taskCard.result.slice(0, 2000) + '…'
+                : m.taskCard.result,
+              // Never persist screenshots — they're huge base64 strings
+              screenshot: undefined,
+            },
+            screenshot: undefined,
+          };
+        });
+
         set(s => {
           const sessions = s.sessionsByProject[projectId] || [];
           const idx = sessions.findIndex(sess => sess.id === sessionId);
           if (idx === -1) return s;
 
           const newSessions = [...sessions];
-          newSessions[idx] = { ...newSessions[idx], messages, updatedAt: Date.now() };
+          newSessions[idx] = { ...newSessions[idx], messages: trimmed, updatedAt: Date.now() };
 
           return {
             sessionsByProject: {
@@ -189,6 +216,38 @@ export const useWebSessionStore = create<WebSessionState>()(
     }),
     {
       name: 'code-scout-web-sessions',
+      storage: {
+        getItem: (name) => {
+          try {
+            const v = localStorage.getItem(name);
+            return v ? JSON.parse(v) : null;
+          } catch { return null; }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch (err) {
+            // Quota exceeded — prune oldest sessions and retry
+            console.warn('[webSessionStore] Storage quota exceeded, pruning old sessions…', err);
+            try {
+              const raw = localStorage.getItem(name);
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed?.state?.sessionsByProject) {
+                  for (const pid of Object.keys(parsed.state.sessionsByProject)) {
+                    const sessions = parsed.state.sessionsByProject[pid];
+                    if (sessions.length > 5) {
+                      parsed.state.sessionsByProject[pid] = sessions.slice(-5);
+                    }
+                  }
+                  localStorage.setItem(name, JSON.stringify(parsed));
+                }
+              }
+            } catch { /* give up silently */ }
+          }
+        },
+        removeItem: (name) => { localStorage.removeItem(name); },
+      },
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         for (const projectId of Object.keys(state.sessionsByProject)) {

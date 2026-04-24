@@ -93,7 +93,11 @@ echo ""
 echo "Build complete. Checking notarization…"
 
 # ── Verify the .app ──────────────────────────────────────────────────────────
-APP_PATH="$ROOT/src-tauri/target/release/bundle/macos/Code Scout.app"
+if [[ -d "$ROOT/src-tauri/target/release/bundle/macos/CodeScout.app" ]]; then
+  APP_PATH="$ROOT/src-tauri/target/release/bundle/macos/CodeScout.app"
+else
+  APP_PATH="$ROOT/src-tauri/target/release/bundle/macos/Code Scout.app"
+fi
 DMG_DIR="$ROOT/src-tauri/target/release/bundle/dmg"
 
 if [[ -d "$APP_PATH" ]]; then

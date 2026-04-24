@@ -156,51 +156,96 @@ fn read_project_dir(path: String) -> Result<Vec<FileEntry>, String> {
 /// Resolve a program name to its absolute path, checking common Node.js locations.
 fn resolve_program(program: &str) -> String {
     if program == "node" || program == "npm" || program == "npx" {
-        let home = std::env::var("HOME").unwrap_or_default();
-        // Check nvm
-        let nvm_base = format!("{}/.nvm/versions/node", home);
-        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
-            let mut versions: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            versions.sort();
-            if let Some(ver) = versions.last() {
-                let bin = format!("{}/{}/bin/{}", nvm_base, ver, program);
-                if Path::new(&bin).exists() {
-                    return bin;
+        // On Windows, executables have .cmd/.exe extensions
+        #[cfg(target_os = "windows")]
+        let suffixes: &[&str] = if program == "node" { &[".exe", ""] } else { &[".cmd", ".exe", ""] };
+        #[cfg(target_os = "windows")]
+        {
+            let appdata = std::env::var("APPDATA").unwrap_or_default();
+            let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+            let programfiles = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+            let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
+
+            // nvm-windows: %APPDATA%\nvm\<version>\node.exe
+            let nvm_base = format!("{}\\nvm", appdata);
+            if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|n| n.starts_with('v') || n.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+                    .collect();
+                versions.sort();
+                if let Some(ver) = versions.last() {
+                    for sfx in suffixes {
+                        let bin = format!("{}\\{}\\{}{}", nvm_base, ver, program, sfx);
+                        if Path::new(&bin).exists() { return bin; }
+                    }
+                }
+            }
+
+            // fnm on Windows: %LOCALAPPDATA%\fnm_multishells\<...>
+            // Standard locations
+            let win_candidates = vec![
+                format!("{}\\nodejs", programfiles),
+                format!("{}\\fnm", localappdata),
+                format!("{}\\volta\\bin", userprofile),
+                format!("{}\\npm", appdata),
+            ];
+            for base in &win_candidates {
+                for sfx in suffixes {
+                    let bin = format!("{}\\{}{}", base, program, sfx);
+                    if Path::new(&bin).exists() { return bin; }
                 }
             }
         }
-        // Check fnm (fast node manager)
-        let fnm_base = format!("{}/.local/share/fnm/node-versions", home);
-        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
-            let mut versions: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            versions.sort();
-            if let Some(ver) = versions.last() {
-                let bin = format!("{}/{}/installation/bin/{}", fnm_base, ver, program);
-                if Path::new(&bin).exists() {
-                    return bin;
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let home = std::env::var("HOME").unwrap_or_default();
+
+            // nvm (most common on macOS/Linux)
+            let nvm_base = format!("{}/.nvm/versions/node", home);
+            if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                versions.sort();
+                if let Some(ver) = versions.last() {
+                    let bin = format!("{}/{}/bin/{}", nvm_base, ver, program);
+                    if Path::new(&bin).exists() { return bin; }
                 }
             }
-        }
-        // Check standard locations (Homebrew, system, volta, etc.)
-        for loc in &[
-            format!("/usr/local/bin/{}", program),
-            format!("/opt/homebrew/bin/{}", program),
-            format!("/usr/bin/{}", program),
-            format!("{}/.volta/bin/{}", home, program),
-            format!("{}/.local/bin/{}", home, program),
-        ] {
-            if Path::new(loc).exists() {
-                return loc.clone();
+
+            // fnm (fast node manager)
+            let fnm_base = format!("{}/.local/share/fnm/node-versions", home);
+            if let Ok(entries) = std::fs::read_dir(&fnm_base) {
+                let mut versions: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                versions.sort();
+                if let Some(ver) = versions.last() {
+                    let bin = format!("{}/{}/installation/bin/{}", fnm_base, ver, program);
+                    if Path::new(&bin).exists() { return bin; }
+                }
+            }
+
+            // Standard locations (Homebrew, system, volta, etc.)
+            for loc in &[
+                format!("/usr/local/bin/{}", program),
+                format!("/opt/homebrew/bin/{}", program),
+                format!("/usr/bin/{}", program),
+                format!("{}/.volta/bin/{}", home, program),
+                format!("{}/.local/bin/{}", home, program),
+            ] {
+                if Path::new(loc).exists() { return loc.clone(); }
             }
         }
+
         program.to_string()
     } else {
         program.to_string()
@@ -210,9 +255,15 @@ fn resolve_program(program: &str) -> String {
 /// Get the bin directory for the resolved node, so npm/npx can find each other.
 fn get_node_bin_dir() -> Option<String> {
     let resolved = resolve_program("node");
-    if resolved == "node" { return None; }
+    if resolved == "node" || resolved == "node.exe" { return None; }
     Path::new(&resolved).parent().map(|p| p.to_string_lossy().to_string())
 }
+
+/// PATH separator for the current platform.
+#[cfg(target_os = "windows")]
+const PATH_SEP: &str = ";";
+#[cfg(not(target_os = "windows"))]
+const PATH_SEP: &str = ":";
 
 /// Spawn a background process (node, etc.) and return its PID.
 #[tauri::command]
@@ -237,7 +288,7 @@ fn spawn_background(program: String, args: Vec<String>, cwd: Option<String>, env
     // Ensure node/npm/npx can find each other by adding node's bin dir to PATH
     if let Some(node_bin) = get_node_bin_dir() {
         let current_path = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", format!("{}:{}", node_bin, current_path));
+        cmd.env("PATH", format!("{}{}{}", node_bin, PATH_SEP, current_path));
     }
 
     if let Some(dir) = &cwd {
@@ -274,7 +325,7 @@ async fn run_command(program: String, args: Vec<String>, cwd: Option<String>, en
     // Ensure node/npm/npx can find each other by adding node's bin dir to PATH
     if let Some(node_bin) = get_node_bin_dir() {
         let current_path = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", format!("{}:{}", node_bin, current_path));
+        cmd.env("PATH", format!("{}{}{}", node_bin, PATH_SEP, current_path));
     }
 
     if let Some(dir) = &cwd {

@@ -784,12 +784,16 @@ async function ensureBrowserAgentSetup(): Promise<string> {
   const scriptPath = `${agentDir}/browser-agent.js`;
   const packagePath = `${agentDir}/package.json`;
 
-  if (!await exists(agentDir)) {
-    await mkdir(agentDir, { recursive: true });
-  }
-
-  // Always re-write the script to pick up source changes (theme, extraction, etc.)
   const { invoke } = await import('@tauri-apps/api/core');
+  // Create directory via Rust for reliability on fresh installs
+  try {
+    await invoke('create_dir', { path: agentDir });
+  } catch {
+    // Fallback to Tauri plugin
+    if (!await exists(agentDir)) {
+      await mkdir(agentDir, { recursive: true });
+    }
+  }
   await invoke('write_file', { path: scriptPath, content: BROWSER_AGENT_SCRIPT });
 
   const pkgExists = await exists(packagePath);
@@ -806,47 +810,81 @@ async function ensureBrowserAgentSetup(): Promise<string> {
   return agentDir;
 }
 
-async function installDependenciesIfNeeded(agentDir: string): Promise<void> {
-  const nodeModulesPath = `${agentDir}/node_modules`;
-  if (await exists(nodeModulesPath)) {
-    return;
-  }
+export type SetupStatusCallback = (status: string) => void;
 
-  console.log('[BrowserService] Installing dependencies...');
-
-  // Use Rust spawn_background for npm install (avoids shell plugin hanging)
+async function checkNodeInstalled(): Promise<{ node: boolean; npm: boolean }> {
   const { invoke } = await import('@tauri-apps/api/core');
+  let node = false, npm = false;
   try {
-    await invoke('spawn_background', {
-      program: 'npm',
-      args: ['install', '--silent'],
-      cwd: agentDir,
-    });
-    // Wait for install to complete (check for node_modules)
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      if (await exists(nodeModulesPath)) break;
-    }
-  } catch (err) {
-    throw new Error(`Failed to install dependencies: ${err}`);
+    await invoke<string>('run_command', { program: 'node', args: ['--version'] });
+    node = true;
+  } catch {}
+  try {
+    await invoke<string>('run_command', { program: 'npm', args: ['--version'] });
+    npm = true;
+  } catch {}
+  return { node, npm };
+}
+
+async function installDependenciesIfNeeded(agentDir: string, onStatus?: SetupStatusCallback): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+
+  // Check Node.js and npm are available
+  onStatus?.('Checking for Node.js...');
+  const { node: hasNode, npm: hasNpm } = await checkNodeInstalled();
+  if (!hasNode || !hasNpm) {
+    const missing = !hasNode && !hasNpm ? 'Node.js' : !hasNode ? 'Node.js' : 'npm';
+    throw new Error(
+      `${missing} is not installed. Code Scout needs Node.js and npm to run the browser agent.\n\n` +
+      'Install Node.js from https://nodejs.org/ (LTS recommended), then restart Code Scout.\n' +
+      'On macOS you can also run: brew install node'
+    );
   }
 
-  // Install Chromium browser if not present
-  console.log('[BrowserService] Checking Chromium...');
+  const nodeModulesPath = `${agentDir}/node_modules`;
+  const playwrightPath = `${nodeModulesPath}/playwright`;
+
+  // Install npm dependencies if needed
+  if (!await exists(nodeModulesPath) || !await exists(playwrightPath)) {
+    onStatus?.('Installing browser dependencies (first time only)...');
+    try {
+      await invoke<string>('run_command', {
+        program: 'npm',
+        args: ['install', '--silent', '--no-fund', '--no-audit'],
+        cwd: agentDir,
+      });
+    } catch (err) {
+      throw new Error(`Failed to install dependencies: ${err}`);
+    }
+  }
+
+  // Install Chromium browser if needed — check the global Playwright cache
+  let hasChromium = false;
   try {
-    await invoke('spawn_background', {
-      program: 'npx',
-      args: ['playwright', 'install', 'chromium'],
-      cwd: agentDir,
-    });
-    // Wait for install to finish
-    await new Promise(r => setTimeout(r, 10000));
-  } catch (err) {
-    console.warn('[BrowserService] Chromium install warning:', err);
+    const homeDir = await appDataDir();
+    // Playwright stores browsers in ~/Library/Caches/ms-playwright on macOS
+    const homeParts = homeDir.split('/Library/');
+    const userHome = homeParts[0] || '';
+    const globalChromium = `${userHome}/Library/Caches/ms-playwright`;
+    if (userHome) hasChromium = await exists(globalChromium);
+  } catch {}
+
+  if (!hasChromium) {
+    onStatus?.('Downloading Chromium browser (first time only, ~150MB)...');
+    try {
+      await invoke<string>('run_command', {
+        program: 'npx',
+        args: ['playwright', 'install', 'chromium'],
+        cwd: agentDir,
+      });
+    } catch (err) {
+      console.warn('[BrowserService] Chromium install warning:', err);
+      onStatus?.('Chromium download may have failed — will try to launch anyway...');
+    }
   }
 }
 
-export async function startBrowserAgent(): Promise<void> {
+export async function startBrowserAgent(onStatus?: SetupStatusCallback): Promise<void> {
   if (agentProcess) {
     await connectWebSocket();
     return;
@@ -861,12 +899,14 @@ export async function startBrowserAgent(): Promise<void> {
   }
 
   // Ensure browser agent is set up in app data directory
+  onStatus?.('Setting up browser agent...');
   const agentDir = await ensureBrowserAgentSetup();
 
   // Install dependencies if needed (first run)
-  await installDependenciesIfNeeded(agentDir);
+  await installDependenciesIfNeeded(agentDir, onStatus);
 
   const scriptFullPath = `${agentDir}/browser-agent.js`;
+  onStatus?.('Launching browser agent...');
   console.log('[BrowserService] Spawning node:', scriptFullPath);
 
   // Use Rust spawn_background — finds node automatically, no shell needed

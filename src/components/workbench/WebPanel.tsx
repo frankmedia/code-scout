@@ -332,7 +332,10 @@ const WebPanel = () => {
   const handleLaunchBrowser = async () => {
     addMessage({ role: 'system', content: '🚀 Starting browser...' });
     try {
-      await startBrowserAgent();
+      await startBrowserAgent((status) => {
+        // Update the last system message with current setup status
+        addMessage({ role: 'system', content: `⏳ ${status}` });
+      });
       const result = await launchBrowser(false);
       if (result.success) {
         setBrowserActive(true);
@@ -398,7 +401,9 @@ const WebPanel = () => {
     if (!isBrowserAgentRunning()) {
       addMessage({ role: 'system', content: '🚀 Starting browser agent...' });
       try {
-        await startBrowserAgent();
+        await startBrowserAgent((status) => {
+          addMessage({ role: 'system', content: `⏳ ${status}` });
+        });
       } catch (err) {
         addMessage({ role: 'system', content: `❌ Failed: ${err instanceof Error ? err.message : String(err)}` });
         return;

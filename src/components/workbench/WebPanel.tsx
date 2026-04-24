@@ -176,6 +176,7 @@ const WebPanel = () => {
   const [messages, setMessages] = useState<WebMessage[]>(WELCOME_MESSAGES);
   const [input, setInput] = useState('');
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const taskRunningRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -215,24 +216,32 @@ const WebPanel = () => {
   
   // For wait_for_user action - shows a prompt and waits for user to continue
   const [userPrompt, setUserPrompt] = useState<{ message: string; resolve: () => void } | null>(null);
+  const [savedFilesOpen, setSavedFilesOpen] = useState(false);
 
-  // Load messages when active session changes (sidebar click).
-  // NEVER wipe messages while a task is actively running.
+  // Load saved messages when user clicks a PAST session in the sidebar.
+  // This effect ONLY runs when activeWebSessionId changes AND is different
+  // from what we're already showing. It never touches a running task.
+  const prevWebSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeTaskId) return; // task running — don't touch messages
-    if (!activeProjectId || !activeWebSessionId) {
+    const sid = activeWebSessionId;
+    // Skip if same session we already processed
+    if (sid === prevWebSessionIdRef.current) return;
+    prevWebSessionIdRef.current = sid;
+
+    // Never interfere with a running task
+    if (taskRunningRef.current || activeTaskId) return;
+
+    if (!activeProjectId || !sid) {
       setMessages(WELCOME_MESSAGES);
       setCurrentSessionId(null);
       return;
     }
-    if (activeWebSessionId === currentSessionId) return;
-    const saved = getSessionMessages(activeProjectId, activeWebSessionId);
+
+    const saved = getSessionMessages(activeProjectId, sid);
     if (saved.length > 0) {
       setMessages(saved as WebMessage[]);
-    } else {
-      setMessages(WELCOME_MESSAGES);
+      setCurrentSessionId(sid);
     }
-    setCurrentSessionId(activeWebSessionId);
   }, [activeWebSessionId, activeProjectId]);
 
   useEffect(() => {
@@ -259,7 +268,10 @@ const WebPanel = () => {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        if (!isBrowserAgentRunning()) return;
+        if (!isBrowserAgentRunning()) {
+          setBrowserActive(false);
+          return;
+        }
         const status = await getBrowserStatus();
         setBrowserActive(status.browserRunning);
         setCurrentBrowserUrl(status.currentUrl);
@@ -394,17 +406,11 @@ const WebPanel = () => {
     }
 
     const taskId = crypto.randomUUID();
-    setActiveTaskId(taskId);
     abortControllerRef.current = new AbortController();
-    
-    // Create session in store for sidebar
-    let sessionId: string | null = null;
-    if (activeProjectId) {
-      sessionId = createSession(activeProjectId, text);
-      setCurrentSessionId(sessionId);
-    }
+    taskRunningRef.current = true;
 
-    // Create the task card
+    // Create the task card BEFORE creating the session,
+    // so messages exist before the session-load effect fires.
     const taskCard: WebTaskCard = {
       id: taskId,
       task: text,
@@ -417,6 +423,17 @@ const WebPanel = () => {
       content: '', 
       taskCard 
     });
+
+    // Mark task as running — this guards the session-load effect
+    setActiveTaskId(taskId);
+
+    // Create session in store for sidebar LAST so the effect
+    // sees activeTaskId and skips the message reload.
+    let sessionId: string | null = null;
+    if (activeProjectId) {
+      sessionId = createSession(activeProjectId, text);
+      setCurrentSessionId(sessionId);
+    }
 
     let currentStepId: string | null = null;
     let stepCount = 0;
@@ -532,6 +549,7 @@ const WebPanel = () => {
       }
     } finally {
       setActiveTaskId(null);
+      taskRunningRef.current = false;
       abortControllerRef.current = null;
       // Persist messages to session store
       if (activeProjectId && sessionId) {
@@ -740,37 +758,44 @@ const WebPanel = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Saved files bar */}
+      {/* Saved files bar — collapsible */}
       {savedWebFiles.length > 0 && (
-        <div className="shrink-0 border-t border-border bg-surface-panel/50 px-3 py-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
-              <FolderOpen className="h-3 w-3" /> Saved:
-            </span>
-            {savedWebFiles.map(f => (
-              <button
-                key={f.absolutePath}
-                onClick={async () => {
-                  try {
-                    const { invoke } = await import('@tauri-apps/api/core');
-                    const content = await invoke<string>('read_file_text', { path: f.absolutePath });
-                    useWorkbenchStore.getState().createFile(f.filename, content);
-                    openFileInEditor(f.filename);
-                  } catch (err) {
-                    console.warn('[WebPanel] Failed to open file:', err);
-                  }
-                }}
-                className="flex items-center gap-1 px-2 py-1 text-[11px] bg-amber-500/10 text-amber-400 rounded-md hover:bg-amber-500/20 transition-colors"
-                title={f.absolutePath}
-              >
-                <FileText className="h-3 w-3" />
-                {f.filename}
-                <span className="text-[9px] text-muted-foreground">
-                  {f.size > 1024 ? `${(f.size / 1024).toFixed(1)}k` : `${f.size}b`}
-                </span>
-              </button>
-            ))}
-          </div>
+        <div className="shrink-0 border-t border-border bg-surface-panel/50">
+          <button
+            type="button"
+            onClick={() => setSavedFilesOpen(p => !p)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] text-muted-foreground font-medium hover:bg-secondary/30 transition-colors"
+          >
+            <FolderOpen className="h-3 w-3" />
+            Saved files ({savedWebFiles.length})
+            <span className={`ml-auto transition-transform text-[8px] ${savedFilesOpen ? 'rotate-180' : ''}`}>▼</span>
+          </button>
+          {savedFilesOpen && (
+            <div className="max-h-24 overflow-y-auto px-3 pb-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {savedWebFiles.map(f => (
+                  <button
+                    key={f.absolutePath}
+                    onClick={async () => {
+                      try {
+                        const { invoke } = await import('@tauri-apps/api/core');
+                        const content = await invoke<string>('read_file_text', { path: f.absolutePath });
+                        useWorkbenchStore.getState().createFile(f.filename, content);
+                        openFileInEditor(f.filename);
+                      } catch (err) {
+                        console.warn('[WebPanel] Failed to open file:', err);
+                      }
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-amber-500/10 text-amber-400 rounded hover:bg-amber-500/20 transition-colors"
+                    title={f.absolutePath}
+                  >
+                    <FileText className="h-2.5 w-2.5" />
+                    {f.filename}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

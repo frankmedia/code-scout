@@ -5,14 +5,13 @@
  * for browser automation commands.
  */
 
-import { Child, Command } from '@tauri-apps/plugin-shell';
-import { resolveResource, appDataDir } from '@tauri-apps/api/path';
-import { exists, mkdir, writeTextFile } from '@tauri-apps/plugin-fs';
+import { appDataDir } from '@tauri-apps/api/path';
+import { exists, mkdir } from '@tauri-apps/plugin-fs';
 
 const BROWSER_AGENT_PORT = 9222;
 const WS_URL = `ws://localhost:${BROWSER_AGENT_PORT}`;
 
-let agentProcess: Child | null = null;
+let agentProcess: { pid: number; kill: () => Promise<void> } | null = null;
 let ws: WebSocket | null = null;
 let wsReady = false;
 let pendingRequests: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }> = new Map();
@@ -135,8 +134,38 @@ function connectWebSocket(timeoutMs = 5000): Promise<void> {
 const BROWSER_AGENT_SCRIPT = `
 const { chromium } = require('playwright');
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 
 const PORT = process.env.BROWSER_AGENT_PORT || 9222;
+
+// Patch Chromium bundle name so macOS Dock says "Code Scout" instead of "Google Chrome for Testing"
+function patchChromiumBundleName() {
+  try {
+    var browserPath = chromium.executablePath();
+    // Walk up from the executable to find the .app bundle
+    var parts = browserPath.split('/');
+    var appIdx = parts.findIndex(function(p) { return p.endsWith('.app'); });
+    if (appIdx < 0) return;
+    var appDir = parts.slice(0, appIdx + 1).join('/');
+    var plistPath = appDir + '/Contents/Info.plist';
+    if (!fs.existsSync(plistPath)) return;
+    var plist = fs.readFileSync(plistPath, 'utf8');
+    if (plist.includes('Code Scout')) return; // already patched
+    plist = plist.replace(/<key>CFBundleDisplayName<\\/key>\\s*<string>[^<]*<\\/string>/g,
+      '<key>CFBundleDisplayName</key>\\n\\t<string>Code Scout Browser</string>');
+    plist = plist.replace(/<key>CFBundleName<\\/key>\\s*<string>[^<]*<\\/string>/g,
+      '<key>CFBundleName</key>\\n\\t<string>Code Scout Browser</string>');
+    fs.writeFileSync(plistPath, plist);
+    // Clear macOS launch services cache so the new name takes effect
+    try { execSync('/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -f "' + appDir + '"'); } catch(e) {}
+    console.log('[BrowserAgent] Patched Chromium bundle name to Code Scout Browser');
+  } catch (e) {
+    console.log('[BrowserAgent] Could not patch bundle name:', e.message);
+  }
+}
+patchChromiumBundleName();
 
 let browser = null, context = null, page = null;
 
@@ -150,7 +179,7 @@ const DARK_THEME_CSS = \`
     50% { text-shadow: 0 0 15px #00d4ff, 0 0 30px #00d4ff60, 0 0 40px #00d4ff30; }
   }
   body::before {
-    content: '🤖 CODE SCOUT BROWSER — AI Controlled';
+    content: '🤖 CODE SCOUT BROWSER';
     position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
     background: linear-gradient(90deg, #0f0f23 0%, #1a1a3e 25%, #16213e 50%, #1a1a3e 75%, #0f0f23 100%);
     background-size: 200% 200%;
@@ -186,7 +215,8 @@ async function handleCommand(cmd) {
         // Launch fresh browser
         browser = await chromium.launch({
           headless: cmd.headless ?? false,
-          args: ['--start-maximized', '--disable-blink-features=AutomationControlled'],
+          ignoreDefaultArgs: ['--enable-automation'],
+          args: ['--start-maximized', '--disable-blink-features=AutomationControlled', '--disable-infobars'],
         });
         context = await browser.newContext({
           viewport: { width: 1280, height: 800 },
@@ -211,6 +241,20 @@ async function handleCommand(cmd) {
             document.querySelector('title') || document.head,
             { subtree: true, childList: true, characterData: true }
           );
+        }, DARK_THEME_CSS);
+        // Navigate to a dark welcome page so the browser isn't blank white
+        await page.goto('about:blank');
+        await page.evaluate((css) => {
+          document.title = 'Scout: Ready';
+          document.body.innerHTML = '';
+          document.body.style.cssText = 'margin:0;min-height:100vh;background:linear-gradient(135deg,#0a0a1a 0%,#0d1b2a 40%,#1b2838 100%);display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;';
+          const el = document.createElement('div');
+          el.style.cssText = 'text-align:center;color:#00d4ff;';
+          el.innerHTML = '<div style="font-size:48px;margin-bottom:16px">\\u{1F916}</div><div style="font-size:24px;font-weight:700;letter-spacing:3px;text-transform:uppercase;margin-bottom:8px">CODE SCOUT BROWSER</div><div style="font-size:14px;color:#6b7b8d">Ready for commands</div>';
+          document.body.appendChild(el);
+          const style = document.createElement('style');
+          style.textContent = css;
+          document.head.appendChild(style);
         }, DARK_THEME_CSS);
         return { success: true, message: 'Browser launched with Code Scout dark theme' };
       }
@@ -363,18 +407,44 @@ async function handleCommand(cmd) {
       }
       case 'extract': {
         if (!page) return { success: false, error: 'No browser running' };
-        let content: string | null | undefined;
+        let content;
         if (cmd.selector) {
           content = await (await page.$(cmd.selector))?.textContent();
         } else {
-          content = await page.evaluate(() => {
-            const BOILERPLATE = 'script,style,nav,footer,header,aside,[role="navigation"],[role="banner"],[role="contentinfo"],.cookie-banner,.cookie-notice,#cookie-consent,.breadcrumb,.breadcrumbs,.site-header,.site-footer,.nav-bar,.navbar';
-            const main = document.querySelector('main,article,[role="main"],.main-content,.page-content,.entry-content,.post-content,#content,#main');
-            const root = main || document.body;
-            const clone = root.cloneNode(true) as HTMLElement;
-            clone.querySelectorAll(BOILERPLATE).forEach(el => el.remove());
-            const text = clone.innerText || '';
-            return text.replace(/\n{3,}/g, '\n\n').trim().slice(0, 120000);
+          await page.evaluate(function() {
+            var SKIP = {SCRIPT:1,STYLE:1,NOSCRIPT:1,LINK:1,META:1,HEAD:1,BR:1,HR:1,IMG:1,SVG:1,VIDEO:1,AUDIO:1,IFRAME:1,CANVAS:1,PICTURE:1,SOURCE:1};
+            document.querySelectorAll('details:not([open])').forEach(function(el){ el.setAttribute('open',''); });
+            document.querySelectorAll('[aria-hidden="true"]').forEach(function(el){ el.removeAttribute('aria-hidden'); });
+            var all = document.querySelectorAll('body *');
+            for (var i = 0; i < all.length; i++) {
+              if (SKIP[all[i].tagName]) continue;
+              var cs = window.getComputedStyle(all[i]);
+              if (cs.display==='none'||cs.visibility==='hidden'||cs.opacity==='0'||(cs.maxHeight==='0px'&&cs.overflow==='hidden')||(cs.height==='0px'&&cs.overflow==='hidden')) {
+                all[i].style.setProperty('display','block','important');
+                all[i].style.setProperty('visibility','visible','important');
+                all[i].style.setProperty('opacity','1','important');
+                all[i].style.setProperty('height','auto','important');
+                all[i].style.setProperty('max-height','none','important');
+                all[i].style.setProperty('overflow','visible','important');
+              }
+            }
+          });
+          await page.waitForTimeout(300);
+          content = await page.evaluate(function() {
+            var BOILERPLATE = 'script,style,noscript,nav,footer,header,aside,[role="navigation"],[role="banner"],[role="contentinfo"],.cookie-banner,.cookie-notice,#cookie-consent,.breadcrumb,.breadcrumbs,.site-header,.site-footer,.nav-bar,.navbar,svg';
+            var main = document.querySelector('main,article,[role="main"],.main-content,.page-content,.entry-content,.post-content,#content,#main');
+            var root = main || document.body;
+            var clone = root.cloneNode(true);
+            clone.querySelectorAll(BOILERPLATE).forEach(function(el){ el.remove(); });
+            var text = clone.innerText || '';
+            // Strip leading whitespace from every line, collapse blank lines, remove lines that are only whitespace
+            var lines = text.split('\\n');
+            var cleaned = [];
+            for (var i = 0; i < lines.length; i++) {
+              var line = lines[i].replace(/^\\s+/, '').replace(/\\s+$/, '');
+              if (line.length > 0) cleaned.push(line);
+            }
+            return cleaned.join('\\n').slice(0, 120000);
           });
         }
         return { success: true, title: await page.title(), url: page.url(), content };
@@ -545,9 +615,9 @@ async function handleCommand(cmd) {
             const data = await page.evaluate(() => {
               const BOILERPLATE = 'script,style,nav,footer,header,aside,[role="navigation"],[role="banner"],[role="contentinfo"],.cookie-banner,.cookie-notice,#cookie-consent,.breadcrumb,.breadcrumbs,.site-header,.site-footer';
               const main = document.querySelector('main,article,[role=main],.main-content,.page-content,.entry-content,.post-content,#content,#main') || document.body;
-              const clone = main.cloneNode(true) as HTMLElement; clone.querySelectorAll(BOILERPLATE).forEach(e=>e.remove());
-              const links: string[] = []; document.querySelectorAll('a[href]').forEach(a => { try { const p = new URL((a as HTMLAnchorElement).href); if (p.origin === location.origin) links.push(p.origin+p.pathname); } catch {} });
-              const text = (clone.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
+              const clone = main.cloneNode(true); clone.querySelectorAll(BOILERPLATE).forEach(e=>e.remove());
+              const links = []; document.querySelectorAll('a[href]').forEach(a => { try { const p = new URL(a.href); if (p.origin === location.origin) links.push(p.origin+p.pathname); } catch {} });
+              const text = (clone.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
               return { title: document.title, url: location.href, content: text.slice(0,30000), links };
             });
             results.push({url:data.url,title:data.title,content:data.content,depth});
@@ -708,71 +778,71 @@ process.on('SIGTERM', async () => { if (browser) await browser.close(); wss.clos
 `;
 
 async function ensureBrowserAgentSetup(): Promise<string> {
-  // Set up browser agent in app data directory
-  const dataDir = await appDataDir();
+  const rawDataDir = await appDataDir();
+  const dataDir = rawDataDir.endsWith('/') ? rawDataDir : rawDataDir + '/';
   const agentDir = `${dataDir}browser-agent`;
   const scriptPath = `${agentDir}/browser-agent.js`;
   const packagePath = `${agentDir}/package.json`;
 
-  // Create directory if needed
   if (!await exists(agentDir)) {
     await mkdir(agentDir, { recursive: true });
   }
 
-  // Write the agent script
-  await writeTextFile(scriptPath, BROWSER_AGENT_SCRIPT);
+  // Always re-write the script to pick up source changes (theme, extraction, etc.)
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('write_file', { path: scriptPath, content: BROWSER_AGENT_SCRIPT });
 
-  // Write package.json if it doesn't exist or is outdated
-  const packageJson = JSON.stringify({
-    name: 'code-scout-browser-agent',
-    version: '1.0.0',
-    private: true,
-    dependencies: { playwright: '^1.52.0', ws: '^8.18.0' }
-  }, null, 2);
-  await writeTextFile(packagePath, packageJson);
+  const pkgExists = await exists(packagePath);
+  if (!pkgExists) {
+    const packageJson = JSON.stringify({
+      name: 'code-scout-browser-agent',
+      version: '1.0.0',
+      private: true,
+      dependencies: { playwright: '^1.52.0', ws: '^8.18.0' }
+    }, null, 2);
+    await invoke('write_file', { path: packagePath, content: packageJson });
+  }
 
   return agentDir;
-}
-
-function isWindows(): boolean {
-  return navigator.userAgent.includes('Windows') || navigator.platform?.startsWith('Win');
 }
 
 async function installDependenciesIfNeeded(agentDir: string): Promise<void> {
   const nodeModulesPath = `${agentDir}/node_modules`;
   if (await exists(nodeModulesPath)) {
-    return; // Already installed
+    return;
   }
 
   console.log('[BrowserService] Installing dependencies...');
 
-  // Use login shell (-l) to inherit user's PATH (for npm/node)
-  // This sources .bash_profile / .zshrc which sets up PATH
-  const isWin = isWindows();
-  const shellCmd = isWin ? 'cmd' : 'bash';
-  const shellArgs = isWin
-    ? ['/c', `cd "${agentDir}" && npm install --silent`]
-    : ['-l', '-c', `cd "${agentDir}" && npm install --silent`];
-
-  const installCmd = Command.create(shellCmd, shellArgs);
-  const installResult = await installCmd.execute();
-
-  if (installResult.code !== 0) {
-    throw new Error(`Failed to install dependencies: ${installResult.stderr}`);
+  // Use Rust spawn_background for npm install (avoids shell plugin hanging)
+  const { invoke } = await import('@tauri-apps/api/core');
+  try {
+    await invoke('spawn_background', {
+      program: 'npm',
+      args: ['install', '--silent'],
+      cwd: agentDir,
+    });
+    // Wait for install to complete (check for node_modules)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      if (await exists(nodeModulesPath)) break;
+    }
+  } catch (err) {
+    throw new Error(`Failed to install dependencies: ${err}`);
   }
 
-  // Install Chromium browser
-  console.log('[BrowserService] Installing Chromium browser...');
-  const playwrightArgs = isWin
-    ? ['/c', `cd "${agentDir}" && npx playwright install chromium`]
-    : ['-l', '-c', `cd "${agentDir}" && npx playwright install chromium`];
-
-  const playwrightCmd = Command.create(shellCmd, playwrightArgs);
-  const playwrightResult = await playwrightCmd.execute();
-
-  if (playwrightResult.code !== 0) {
-    console.warn('[BrowserService] Chromium install warning:', playwrightResult.stderr);
-    // Don't fail - Chromium might already be installed globally
+  // Install Chromium browser if not present
+  console.log('[BrowserService] Checking Chromium...');
+  try {
+    await invoke('spawn_background', {
+      program: 'npx',
+      args: ['playwright', 'install', 'chromium'],
+      cwd: agentDir,
+    });
+    // Wait for install to finish
+    await new Promise(r => setTimeout(r, 10000));
+  } catch (err) {
+    console.warn('[BrowserService] Chromium install warning:', err);
   }
 }
 
@@ -785,53 +855,51 @@ export async function startBrowserAgent(): Promise<void> {
   // Try to connect first (agent might already be running)
   try {
     await connectWebSocket(2000);
-    console.log('[BrowserService] Connected to existing browser agent');
     return;
-  } catch {
-    // Agent not running, start it
-    console.log('[BrowserService] No existing agent, starting new one...');
+  } catch (e) {
+    console.log('[BrowserService] No existing agent, starting fresh...');
   }
-
-  console.log('[BrowserService] Setting up browser agent...');
 
   // Ensure browser agent is set up in app data directory
   const agentDir = await ensureBrowserAgentSetup();
-  console.log('[BrowserService] Agent directory:', agentDir);
 
   // Install dependencies if needed (first run)
-  console.log('[BrowserService] Checking dependencies...');
   await installDependenciesIfNeeded(agentDir);
-  console.log('[BrowserService] Dependencies ready');
 
-  // Start the agent (use login shell to inherit PATH)
-  const isWin = isWindows();
-  const shellCmd = isWin ? 'cmd' : 'bash';
-  const shellArgs = isWin
-    ? ['/c', `cd "${agentDir}" && set BROWSER_AGENT_PORT=${BROWSER_AGENT_PORT} && node browser-agent.js`]
-    : ['-l', '-c', `cd "${agentDir}" && BROWSER_AGENT_PORT=${BROWSER_AGENT_PORT} node browser-agent.js`];
+  const scriptFullPath = `${agentDir}/browser-agent.js`;
+  console.log('[BrowserService] Spawning node:', scriptFullPath);
 
-  console.log('[BrowserService] Starting agent with:', shellCmd, shellArgs);
+  // Use Rust spawn_background — finds node automatically, no shell needed
+  const { invoke } = await import('@tauri-apps/api/core');
+  let pid: number;
+  try {
+    pid = await invoke<number>('spawn_background', {
+      program: 'node',
+      args: [scriptFullPath],
+      cwd: agentDir,
+      env: { BROWSER_AGENT_PORT: String(BROWSER_AGENT_PORT) },
+    });
+    console.log('[BrowserService] Spawned with PID:', pid);
+  } catch (spawnErr) {
+    throw new Error(`Failed to spawn browser agent: ${spawnErr}`);
+  }
 
-  const command = Command.create(shellCmd, shellArgs);
-
-  let startupOutput = '';
-  command.stdout.on('data', (line) => {
-    console.log('[BrowserAgent]', line);
-    startupOutput += line;
-  });
-  command.stderr.on('data', (line) => {
-    console.error('[BrowserAgent ERROR]', line);
-    startupOutput += line;
-  });
-
-  agentProcess = await command.spawn();
-  console.log('[BrowserService] Agent process spawned, pid:', agentProcess.pid);
+  // We don't get a Child handle from Rust, but we track the PID for cleanup
+  agentProcess = {
+    pid,
+    kill: async () => {
+      try {
+        const { invoke: inv } = await import('@tauri-apps/api/core');
+        await inv('spawn_background', { program: 'kill', args: [String(pid)], cwd: '/' });
+      } catch {}
+    },
+  };
 
   // Wait for server to start, retry connection a few times
   let connected = false;
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log(`[BrowserService] Connection attempt ${attempt}/5...`);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log(`[BrowserService] Connection attempt ${attempt}/8...`);
     try {
       await connectWebSocket(3000);
       connected = true;
@@ -842,12 +910,12 @@ export async function startBrowserAgent(): Promise<void> {
   }
 
   if (!connected) {
-    console.error('[BrowserService] Failed to connect after 5 attempts. Output:', startupOutput);
+    console.error('[BrowserService] Failed to connect after 8 attempts');
     if (agentProcess) {
       await agentProcess.kill().catch(() => {});
       agentProcess = null;
     }
-    throw new Error(`Failed to start browser agent. Output: ${startupOutput.slice(-500)}`);
+    throw new Error('Failed to start browser agent — could not connect to WebSocket after 8 attempts');
   }
 
   console.log('[BrowserService] Browser agent started successfully');

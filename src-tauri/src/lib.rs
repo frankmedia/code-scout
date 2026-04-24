@@ -234,13 +234,15 @@ fn resolve_program(program: &str) -> String {
                 }
             }
 
-            // Standard locations (Homebrew, system, volta, etc.)
+            // Standard locations (Homebrew, system, volta, snap, etc.)
             for loc in &[
                 format!("/usr/local/bin/{}", program),
                 format!("/opt/homebrew/bin/{}", program),
                 format!("/usr/bin/{}", program),
+                format!("/snap/bin/{}", program),
                 format!("{}/.volta/bin/{}", home, program),
                 format!("{}/.local/bin/{}", home, program),
+                format!("{}/.asdf/shims/{}", home, program),
             ] {
                 if Path::new(loc).exists() { return loc.clone(); }
             }

@@ -38,10 +38,14 @@ echo ""
 echo "┌──────────────────────────────────────────┐"
 echo "│  Step 1/5 — Bump version                 │"
 echo "└──────────────────────────────────────────┘"
-node "$ROOT/scripts/bump-app-version.mjs" "${FORWARD[@]+"${FORWARD[@]}"}"
+if [[ "$SKIP_BUILD" -eq 1 ]]; then
+  echo "Skipped version bump (--skip-build → publish existing artifacts as-is)."
+else
+  node "$ROOT/scripts/bump-app-version.mjs" "${FORWARD[@]+"${FORWARD[@]}"}"
 
-echo "→ cargo update -p app (Cargo.lock)…"
-(cd "$ROOT/src-tauri" && cargo update -p app)
+  echo "→ cargo update -p app (Cargo.lock)…"
+  (cd "$ROOT/src-tauri" && cargo update -p app)
+fi
 
 VERSION="$(node -p "require('./package.json').version")"
 TAG="v${VERSION}"
@@ -55,14 +59,18 @@ echo ""
 echo "┌──────────────────────────────────────────┐"
 echo "│  Step 2/5 — Commit version bump          │"
 echo "└──────────────────────────────────────────┘"
-git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock public/code-scout/download/version.json
-if git diff --staged --quiet; then
-  echo "Version files already committed."
+if [[ "$SKIP_BUILD" -eq 1 ]]; then
+  echo "Skipped commit (--skip-build → assuming version commit already pushed)."
 else
-  git commit -m "chore: release v${VERSION}"
+  git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock public/code-scout/download/version.json
+  if git diff --staged --quiet; then
+    echo "Version files already committed."
+  else
+    git commit -m "chore: release v${VERSION}"
+  fi
+  git push origin main
+  echo "Pushed version bump to main."
 fi
-git push origin main
-echo "Pushed version bump to main."
 
 # ── 3. Notarized build ───────────────────────────────────────────────────────
 echo ""
@@ -84,11 +92,25 @@ echo "└───────────────────────�
 DMG_DIR="$ROOT/src-tauri/target/release/bundle/dmg"
 APP_DIR="$ROOT/src-tauri/target/release/bundle/macos"
 
-DMG="$(ls -t "$DMG_DIR"/*.dmg 2>/dev/null | head -n 1 || true)"
-if [[ -z "$DMG" ]]; then
-  echo "No DMG found in $DMG_DIR — cannot create release." >&2
+# We expect exactly this DMG name (produced by build-signed-notarized.sh)
+EXPECTED_DMG="$DMG_DIR/CodeScout_${VERSION}_aarch64.dmg"
+if [[ ! -f "$EXPECTED_DMG" ]]; then
+  echo "" >&2
+  echo "ERROR: Expected DMG not found: $EXPECTED_DMG" >&2
+  echo "The build/notarization step did not produce a DMG for v${VERSION}." >&2
+  echo "Re-run: bash scripts/build-signed-notarized.sh --skip-tauri-build" >&2
   exit 1
 fi
+DMG="$EXPECTED_DMG"
+
+# Verify DMG is notarized + stapled before publishing
+if ! xcrun stapler validate "$DMG" >/dev/null 2>&1; then
+  echo "" >&2
+  echo "ERROR: DMG is not stapled/notarized: $DMG" >&2
+  echo "Re-run: bash scripts/build-signed-notarized.sh --skip-tauri-build" >&2
+  exit 1
+fi
+echo "DMG verified (notarized + stapled): $(basename "$DMG")"
 
 ZIP="/tmp/CodeScout-aarch64-apple-darwin.zip"
 if [[ -d "$APP_DIR/CodeScout.app" ]]; then

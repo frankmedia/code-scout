@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.34"
+version = "0.1.35"
 description = "Code Scout — AI coding assistant"
 authors = ["Code Scout"]
 license = ""
@@ -27,3 +27,4 @@ tauri-plugin-log    = "2"
 tauri-plugin-shell  = "2"
 tauri-plugin-fs     = "2.5"
 tauri-plugin-dialog = "2.7"
+if-addrs = "0.15.0"

@@ -251,8 +251,8 @@ const TerminalPanel = () => {
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={running ? 'Command running… (Ctrl+C to interrupt)' : 'Type a command…'}
-                disabled={running}
-                className="flex-1 bg-transparent text-foreground focus:outline-none placeholder:text-muted-foreground/40 disabled:opacity-50 caret-primary"
+                readOnly={running}
+                className={`flex-1 bg-transparent text-foreground focus:outline-none placeholder:text-muted-foreground/40 caret-primary ${running ? 'opacity-50' : ''}`}
                 spellCheck={false}
                 autoComplete="off"
               />

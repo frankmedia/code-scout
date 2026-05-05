@@ -150,6 +150,7 @@ const RoleModelDropdown = ({
   const getModelForRole = useModelStore(s => s.getModelForRole);
   const updateModel = useModelStore(s => s.updateModel);
   const setDefault = useModelStore(s => s.setDefault);
+  const setSelectedChatModel = useModelStore(s => s.setSelectedChatModel);
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -201,9 +202,13 @@ const RoleModelDropdown = ({
                 <button
                   key={m.id}
                   onClick={() => {
-                    // Set this model's role and make it the default for this role
+                    // Set this model's role and make it the default for this role.
+                    // Clear any per-chat override so the role dropdowns are authoritative —
+                    // otherwise a stale `selectedChatModel` (e.g. a model that was removed
+                    // from the endpoint) silently wins for every role.
                     updateModel(m.id, { role });
                     setDefault(m.id, role);
+                    setSelectedChatModel(null);
                     setOpen(false);
                   }}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-surface-hover transition-colors ${
@@ -957,8 +962,10 @@ const AIPanel = () => {
   }, [pendingTextFiles.length]);
 
   const getActiveModel = (forRole: 'orchestrator' | 'coder' | 'tester' = 'orchestrator') => {
+    // Per-chat override only wins when its role matches the requested role.
+    // Otherwise a stale override silently overrides every role dropdown.
     const manual = getSelectedChatModel();
-    if (manual) return manual;
+    if (manual && manual.role === forRole) return manual;
     return getModelForRole(forRole) ?? getModelForRole('orchestrator');
   };
 

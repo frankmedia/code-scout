@@ -172,7 +172,11 @@ function wrapWithPathSetup(cmd: string, shell: string, cwd?: string): string {
   // Inject cd into the command itself — guarantees correct cwd even if Tauri's
   // Command.create cwd option doesn't take effect (e.g. with shell -c wrapping).
   const cdPrefix = cwd ? `cd "${cwd}" && ` : '';
-  return `${pathFix} ${profiles} ${cdPrefix}${cmd}`;
+  // `exec` replaces the wrapping shell process with the user's command so they
+  // share a PID. Otherwise Tauri's child.kill() targets the shell, not the
+  // long-running script underneath, and Ctrl+C in the terminal panel does
+  // nothing once the shell has handed control off.
+  return `${pathFix} ${profiles} ${cdPrefix}exec ${cmd}`;
 }
 
 /**

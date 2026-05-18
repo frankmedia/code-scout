@@ -6,7 +6,7 @@ AI-powered coding assistant with multi-agent planning and execution. Built as a 
 
 ## Download
 
-Pre-built macOS releases are available on [llmscout.co/code-scout](https://llmscout.co/code-scout). Windows and Linux builds are produced by the workflows in [`.github/workflows`](.github/workflows).
+Get the latest pre-built macOS release from **[llmscout.co/code-scout](https://llmscout.co/code-scout)**. Windows and Linux builds are produced by the workflows in [`.github/workflows`](.github/workflows).
 
 ## Build from source
 
@@ -27,6 +27,10 @@ The web build is served by Vite on `http://localhost:8080`; Tauri loads it into 
 - `scripts/` — release, signing, and notarization scripts
 - `docs/` — build and CI notes
 - `waitlist-api/` — small Node service for the public waitlist
+
+## Support the project
+
+If Code Scout is useful to you, you can [buy me a coffee ☕](https://buymeacoffee.com/frankvitet8). It keeps the lights on and the builds shipping.
 
 ## License
 

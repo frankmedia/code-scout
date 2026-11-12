@@ -23,7 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local tooling state (Claude Code, Code Scout self-metadata)
+# Local tooling state
 .claude/
 .codescout/
 

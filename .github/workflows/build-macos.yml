@@ -173,6 +173,6 @@ jobs:
 
             Tag: ${{ steps.meta.outputs.tag }}
           releaseDraft: true
-          prerelease: true
+          prerelease: false
           includeUpdaterJson: false
           args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json

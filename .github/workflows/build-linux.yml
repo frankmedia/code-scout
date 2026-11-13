@@ -68,6 +68,6 @@ jobs:
 
             Tag: ${{ steps.meta.outputs.tag }}
           releaseDraft: true
-          prerelease: true
+          prerelease: false
           includeUpdaterJson: false
           args: --target x86_64-unknown-linux-gnu --config src-tauri/tauri.nosidecar.conf.json --config src-tauri/tauri.release.conf.json
